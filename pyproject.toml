@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amcl-server"
+version = "1.0.4"
+description = "A/MCL — Agent/Multi-Coding-agent Context Layer. MCP server for automatic context persistence across AI coding agents."
+readme = "README.md"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+keywords = ["mcp", "ai", "agents", "context", "llm", "coding"]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "watchdog>=4.0.0",
+    "gitpython>=3.1.0",
+    "click>=8.1.0",
+    "psutil>=5.9.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/amcl"
+Repository = "https://github.com/yourusername/amcl.git"
+
+[project.scripts]
+amcl-server = "amcl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
