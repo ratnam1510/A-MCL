@@ -17,7 +17,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group()
-@click.version_option(version="1.0.0", prog_name="amcl-server")
+@click.version_option(version="1.0.5", prog_name="amcl-server")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 

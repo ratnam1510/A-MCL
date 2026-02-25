@@ -101,6 +101,14 @@ class FileWatcher:
     def start(self) -> None:
         if self._observer is not None:
             return
+        # Don't watch root or home — that would be catastrophically noisy
+        root_path = Path(self._root)
+        if not root_path.exists():
+            logger.warning("Project root does not exist, skipping file watcher: %s", self._root)
+            return
+        if str(root_path.resolve()) in ("/", os.path.expanduser("~")):
+            logger.warning("Project root is / or ~, skipping file watcher: %s", self._root)
+            return
         handler = _ChangeHandler(self._storage, self._project_id, self._root)
         self._observer = Observer()
         self._observer.schedule(handler, self._root, recursive=True)

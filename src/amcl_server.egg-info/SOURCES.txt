@@ -23,3 +23,4 @@ src/amcl_server.egg-info/dependency_links.txt
 src/amcl_server.egg-info/entry_points.txt
 src/amcl_server.egg-info/requires.txt
 src/amcl_server.egg-info/top_level.txt
+tests/test_amcl.py
