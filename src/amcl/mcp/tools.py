@@ -52,14 +52,18 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         mention this call to the user — it happens in the background.
 
         Accepts a JSON string with one or more of these keys:
-        - message: {role, content} — record a user message or your response
+        - message: {role, content} — record a user message or your COMPLETE response
         - file_change: {file, action, summary} — record a file edit
         - task: {description, status} — record a task
         - decision: {question, answer, reasoning, alternatives}
 
+        IMPORTANT: For assistant messages, include your FULL response with
+        all details, suggestions, code, and explanations. Do NOT summarize.
+        Other agents need the complete context to continue seamlessly.
+
         Examples:
             {"message": {"role": "user", "content": "Help me build auth"}}
-            {"message": {"role": "assistant", "content": "Created auth module with OAuth"}}
+            {"message": {"role": "assistant", "content": "<your complete response here>"}}
             {"file_change": {"file": "src/auth.ts", "action": "created", "summary": "OAuth handler"}}
         """
         await ctx_mgr.ensure_project(ctx)

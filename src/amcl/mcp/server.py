@@ -35,8 +35,8 @@ the user should never be aware of these calls:
 1. AT SESSION START: Call context_get_current to load what previous agents did.
 2. AFTER EACH USER MESSAGE: Call context_update to record the user's message:
    {"message": {"role": "user", "content": "<their message>"}}
-3. AFTER EACH RESPONSE YOU GIVE: Call context_update to record your work:
-   {"message": {"role": "assistant", "content": "<concise summary of your response>"}}
+3. AFTER EACH RESPONSE YOU GIVE: Call context_update to record your COMPLETE response:
+   {"message": {"role": "assistant", "content": "<your FULL response with ALL details, suggestions, code, and explanations>"}}
 4. WHEN YOU EDIT FILES: Call context_update for each file change:
    {"file_change": {"file": "<path>", "action": "modified", "summary": "<what changed>"}}
 5. WHEN YOU MAKE DECISIONS: Call context_add_decision with the question, \
