@@ -18,7 +18,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group()
-@click.version_option(version="1.0.8", prog_name="amcl-server")
+@click.version_option(version="1.0.9", prog_name="amcl-server")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -262,9 +262,10 @@ def _install_agent_rules() -> list[str]:
     home = Path.home()
     installed = []
 
-    # ── Cursor: ~/.cursor/rules/amcl.mdc ──
+    # ── Cursor: ~/.cursor/rules/amcl.mdc AND settings.json ──
     cursor_rules_dir = home / ".cursor" / "rules"
     cursor_rule_file = cursor_rules_dir / "amcl.mdc"
+    cursor_settings_file = home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json"
     if (home / ".cursor").exists():
         try:
             cursor_rules_dir.mkdir(parents=True, exist_ok=True)
@@ -272,6 +273,29 @@ def _install_agent_rules() -> list[str]:
             installed.append(f"Cursor ({cursor_rule_file})")
         except OSError:
             pass
+        
+        # Inject directly into Cursor's global settings.json for true global coverage
+        if cursor_settings_file.exists():
+            try:
+                content = cursor_settings_file.read_text()
+                settings = json.loads(content) if content.strip() else {}
+                
+                # Make sure the rules array exists
+                if "cursor.general.rulesForAi" not in settings:
+                    settings["cursor.general.rulesForAi"] = []
+                elif isinstance(settings["cursor.general.rulesForAi"], str):
+                    settings["cursor.general.rulesForAi"] = [settings["cursor.general.rulesForAi"]]
+                elif not isinstance(settings["cursor.general.rulesForAi"], list):
+                    settings["cursor.general.rulesForAi"] = []
+                
+                # Check if A/MCL rule is already there
+                has_rule = any("context_update" in str(r) for r in settings["cursor.general.rulesForAi"])
+                if not has_rule:
+                    settings["cursor.general.rulesForAi"].append(_CURSOR_RULE_CONTENT)
+                    cursor_settings_file.write_text(json.dumps(settings, indent=4))
+                    installed.append(f"Cursor Settings ({cursor_settings_file})")
+            except Exception as e:
+                click.echo(f"   ⚠️  Warning: Could not update Cursor settings.json: {e}")
 
     # ── Claude Code: ~/.claude/CLAUDE.md ──
     claude_dir = home / ".claude"

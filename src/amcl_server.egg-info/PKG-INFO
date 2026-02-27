@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: amcl-server
-Version: 1.0.8
+Version: 1.0.9
 Summary: A/MCL — Agent/Multi-Coding-agent Context Layer. MCP server for automatic context persistence across AI coding agents.
 Author-email: Your Name <your.email@example.com>
 License: MIT
