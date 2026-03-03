@@ -18,7 +18,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group()
-@click.version_option(version="1.0.9", prog_name="amcl-server")
+@click.version_option(version="1.0.11", prog_name="amcl-server")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -147,6 +147,9 @@ def check():
                 if config_path.name == "settings.json" and "amp" in str(config_path):
                     amcl_config = existing.get("amp.mcpServers", {}).get("amcl")
                     is_configured = amcl_config is not None
+                elif "opencode.json" in str(config_path):
+                    amcl_config = existing.get("mcp", {}).get("amcl")
+                    is_configured = amcl_config is not None
                 elif "amcl" in existing.get("mcpServers", {}):
                     amcl_config = existing["mcpServers"]["amcl"]
                     is_configured = True
@@ -254,6 +257,7 @@ def _get_agent_rule_locations(home: Path) -> dict[str, Path]:
         "Claude Code": home / ".claude" / "CLAUDE.md",
         "Antigravity": home / ".gemini" / "GEMINI.md",
         "Amp": home / ".amp" / "instructions.md",
+        "OpenCode": home / ".config" / "opencode" / "AGENTS.md",
     }
 
 
@@ -329,6 +333,16 @@ def _install_agent_rules() -> list[str]:
         except OSError:
             pass
 
+    # ── OpenCode: ~/.config/opencode/AGENTS.md ──
+    opencode_dir = home / ".config" / "opencode"
+    opencode_file = opencode_dir / "AGENTS.md"
+    if opencode_dir.exists():
+        try:
+            _append_or_replace_rule(opencode_file, _AMCL_RULE_CONTENT)
+            installed.append(f"OpenCode ({opencode_file})")
+        except OSError:
+            pass
+
     return installed
 
 
@@ -392,6 +406,7 @@ def _get_agent_config_locations(home: Path) -> dict[str, list[Path]]:
         "Generic MCP": [home / ".mcp" / "config.json"],
         "Roo / Cline (VSCode)": [home / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
         "Roo / Cline (Cursor)": [home / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
+        "OpenCode": [home / ".config" / "opencode" / "opencode.json"],
     }
 
 
@@ -403,6 +418,7 @@ _AGENT_ENV_NAMES = {
     "Generic MCP": "generic",
     "Roo / Cline (VSCode)": "roo-cline",
     "Roo / Cline (Cursor)": "roo-cline",
+    "OpenCode": "opencode",
 }
 
 
@@ -438,6 +454,8 @@ def _try_auto_register(script_path: str) -> list[str]:
                     try:
                         if config_path.name == "settings.json" and config_path.parent.name == "amp":
                             config_path.write_text(json.dumps({"amp.mcpServers": {}}, indent=2))
+                        elif config_path.name == "opencode.json":
+                            config_path.write_text(json.dumps({"mcp": {}}, indent=2))
                         else:
                             config_path.write_text(json.dumps({"mcpServers": {}}, indent=2))
                     except OSError:
@@ -449,24 +467,55 @@ def _try_auto_register(script_path: str) -> list[str]:
                 content = config_path.read_text()
                 existing = json.loads(content) if content.strip() else {}
 
+                is_configured = False
                 modified = False
+                
                 if config_path.name == "settings.json" and "amp" in str(config_path):
-                    if "amp.mcpServers" not in existing:
-                        existing["amp.mcpServers"] = {}
-                    existing["amp.mcpServers"].update(config)
-                    modified = True
+                    existing.setdefault("amp.mcpServers", {})
+                    if "amcl" not in existing["amp.mcpServers"]:
+                        existing["amp.mcpServers"]["amcl"] = config["amcl"]
+                        modified = True
+                    else:
+                        is_configured = True
+                elif config_path.name == "opencode.json":
+                    existing.setdefault("mcp", {})
+                    if "amcl" not in existing["mcp"]:
+                        # OpenCode uses specific format
+                        existing["mcp"]["amcl"] = {
+                            "type": "local",
+                            "command": [
+                                "env",
+                                f"AMCL_DATA_DIR={config['amcl']['env']['AMCL_DATA_DIR']}",
+                                f"AMCL_AGENT_NAME={config['amcl']['env']['AMCL_AGENT_NAME']}",
+                                f"AMCL_LOG_LEVEL={config['amcl']['env']['AMCL_LOG_LEVEL']}",
+                                config["amcl"]["command"]
+                            ] + config["amcl"].get("args", []),
+                            "enabled": True
+                        }
+                        modified = True
+                    else:
+                        is_configured = True
                 elif "mcpServers" in existing or config_path.name in ("mcp.json", "claude_desktop_config.json", "cline_mcp_settings.json", "config.json", "mcp_config.json"):
-                    if "mcpServers" not in existing:
-                        existing["mcpServers"] = {}
-                    existing["mcpServers"].update(config)
-                    modified = True
+                    existing.setdefault("mcpServers", {})
+                    if "amcl" not in existing["mcpServers"]:
+                        existing["mcpServers"]["amcl"] = config["amcl"]
+                        modified = True
+                    else:
+                        is_configured = True
                 elif "servers" in existing:
-                    existing["servers"].update(config)
-                    modified = True
+                    existing.setdefault("servers", {})
+                    if "amcl" not in existing["servers"]:
+                        existing["servers"]["amcl"] = config["amcl"]
+                        modified = True
+                    else:
+                        is_configured = True
 
                 if modified:
                     config_path.write_text(json.dumps(existing, indent=2))
                     registered.append(f"{agent_name} ({config_path}) → agent={agent_env_name}")
+                elif is_configured:
+                    # Already configured, just add to registered list for reporting
+                    registered.append(f"{agent_name} ({config_path}) → agent={agent_env_name} (already configured)")
             except (json.JSONDecodeError, OSError):
                 continue
 

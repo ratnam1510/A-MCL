@@ -535,8 +535,8 @@ def test_cli_version():
     from amcl.cli import main
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
-    assert "1.0.9" in result.output
-    print("✅ Test 25: CLI version is correct (1.0.9)")
+    assert "1.0.11" in result.output
+    print("✅ Test 25: CLI version is correct (1.0.11)")
 
 
 def test_cli_status():
@@ -635,7 +635,7 @@ def main():
     errors = []
 
     print("=" * 60)
-    print("  A/MCL v1.0.9 — Comprehensive Test Suite")
+    print("  A/MCL v1.0.11 — Comprehensive Test Suite")
     print("  27 tests across 8 categories")
     print("=" * 60)
     print()
