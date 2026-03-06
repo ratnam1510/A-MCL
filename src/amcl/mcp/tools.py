@@ -165,3 +165,25 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         await ctx_mgr.ensure_project(ctx)
         tid = ctx_mgr.add_blocker(description)
         return json.dumps({"status": "ok", "task_id": tid, "status_set": "blocked"})
+
+    @mcp.tool()
+    async def context_preference_set(category: str, preference: str, ctx: Context = None) -> str:
+        """Record a global user preference that applies across ALL projects.
+
+        Use this to remember the user's coding style, preferred tools,
+        or workflow choices (e.g. 'formatting': 'use double quotes').
+        This is saved globally and will be visible to all agents in
+        all future projects.
+
+        Args:
+            category: A short, unique identifier for what this preference is about (e.g. 'formatting', 'package_manager').
+            preference: The actual preference rule or detail.
+        """
+        await ctx_mgr.ensure_project(ctx)
+        ctx_mgr.set_global_preference(category, preference)
+        return json.dumps({
+            "status": "ok", 
+            "category": category,
+            "preference": preference,
+            "scope": "global"
+        })

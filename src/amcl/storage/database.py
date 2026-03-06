@@ -11,7 +11,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 AMCL_DATA_DIR = Path(os.environ.get("AMCL_DATA_DIR", os.path.expanduser("~/.amcl")))
 DB_PATH = AMCL_DATA_DIR / "amcl.db"
@@ -110,6 +110,101 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_project ON agent_sessions(project_id);
 """
 
+_SCHEMA_SQL_V2 = """
+-- Global Preferences (V2)
+CREATE TABLE IF NOT EXISTS global_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL UNIQUE,
+    preference TEXT NOT NULL,
+    source_agent TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- FTS5 Search Tables (V2)
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+USING fts5(
+    content,
+    role UNINDEXED,
+    agent UNINDEXED,
+    content='messages'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS file_changes_fts
+USING fts5(
+    file_path,
+    summary,
+    diff,
+    action UNINDEXED,
+    content='file_changes',
+    content_rowid='id'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS decisions_fts
+USING fts5(
+    question,
+    answer,
+    reasoning,
+    alternatives,
+    content='decisions',
+    content_rowid='id'
+);
+
+-- Triggers for messages_fts
+CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, content, role, agent)
+  VALUES (new.rowid, new.content, new.role, new.agent);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, content, role, agent)
+  VALUES ('delete', old.rowid, old.content, old.role, old.agent);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, content, role, agent)
+  VALUES ('delete', old.rowid, old.content, old.role, old.agent);
+  INSERT INTO messages_fts(rowid, content, role, agent)
+  VALUES (new.rowid, new.content, new.role, new.agent);
+END;
+
+-- Triggers for file_changes_fts
+CREATE TRIGGER IF NOT EXISTS file_changes_ai AFTER INSERT ON file_changes BEGIN
+  INSERT INTO file_changes_fts(rowid, file_path, summary, diff, action)
+  VALUES (new.id, new.file_path, new.summary, new.diff, new.action);
+END;
+
+CREATE TRIGGER IF NOT EXISTS file_changes_ad AFTER DELETE ON file_changes BEGIN
+  INSERT INTO file_changes_fts(file_changes_fts, rowid, file_path, summary, diff, action)
+  VALUES ('delete', old.id, old.file_path, old.summary, old.diff, old.action);
+END;
+
+CREATE TRIGGER IF NOT EXISTS file_changes_au AFTER UPDATE ON file_changes BEGIN
+  INSERT INTO file_changes_fts(file_changes_fts, rowid, file_path, summary, diff, action)
+  VALUES ('delete', old.id, old.file_path, old.summary, old.diff, old.action);
+  INSERT INTO file_changes_fts(rowid, file_path, summary, diff, action)
+  VALUES (new.id, new.file_path, new.summary, new.diff, new.action);
+END;
+
+-- Triggers for decisions_fts
+CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN
+  INSERT INTO decisions_fts(rowid, question, answer, reasoning, alternatives)
+  VALUES (new.id, new.question, new.answer, new.reasoning, new.alternatives);
+END;
+
+CREATE TRIGGER IF NOT EXISTS decisions_ad AFTER DELETE ON decisions BEGIN
+  INSERT INTO decisions_fts(decisions_fts, rowid, question, answer, reasoning, alternatives)
+  VALUES ('delete', old.id, old.question, old.answer, old.reasoning, old.alternatives);
+END;
+
+CREATE TRIGGER IF NOT EXISTS decisions_au AFTER UPDATE ON decisions BEGIN
+  INSERT INTO decisions_fts(decisions_fts, rowid, question, answer, reasoning, alternatives)
+  VALUES ('delete', old.id, old.question, old.answer, old.reasoning, old.alternatives);
+  INSERT INTO decisions_fts(rowid, question, answer, reasoning, alternatives)
+  VALUES (new.id, new.question, new.answer, new.reasoning, new.alternatives);
+END;
+"""
+
+
 
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """
@@ -132,11 +227,24 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
         current_version = 0
 
     if current_version < SCHEMA_VERSION:
-        conn.executescript(_SCHEMA_SQL)
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)",
-            (SCHEMA_VERSION,),
-        )
+        if current_version == 0:
+            conn.executescript(_SCHEMA_SQL)
+            conn.executescript(_SCHEMA_SQL_V2)
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                (SCHEMA_VERSION,),
+            )
+        else:
+            if current_version < 2:
+                conn.executescript(_SCHEMA_SQL_V2)
+                # Rebuild external content tables for existing data
+                conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+                conn.execute("INSERT INTO file_changes_fts(file_changes_fts) VALUES('rebuild')")
+                conn.execute("INSERT INTO decisions_fts(decisions_fts) VALUES('rebuild')")
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)",
+                    (2,),
+                )
         conn.commit()
 
     return conn

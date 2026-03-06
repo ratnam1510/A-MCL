@@ -18,7 +18,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group()
-@click.version_option(version="1.0.11", prog_name="amcl-server")
+@click.version_option(version="1.1.0", prog_name="amcl-server")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -120,6 +120,46 @@ def status():
         click.echo("   Status:    ✅ Ready")
     else:
         click.echo("   Status:    ❌ Not initialized (run `amcl-server setup`)")
+
+
+@main.command()
+def stats():
+    """Show agent usage statistics and leaderboard."""
+    if not DB_PATH.exists():
+        click.echo("❌ Not initialized (run `amcl-server setup`)")
+        return
+
+    from amcl.storage.database import get_connection
+
+    conn = get_connection()
+    try:
+        rows = conn.execute('''
+            SELECT agent, COUNT(*) as count 
+            FROM messages 
+            WHERE agent != '' AND agent IS NOT NULL 
+            GROUP BY agent 
+            ORDER BY count DESC
+        ''').fetchall()
+
+        # Print orange leaderboard (\033[38;5;208m is a nice ANSI 256-color orange)
+        orange = "\033[38;5;208m"
+        reset = "\033[0m"
+
+        click.echo(f"\n{orange}🏆 A/MCL Agent Usage Leaderboard{reset}")
+        click.echo(f"{orange}================================={reset}")
+
+        if not rows:
+            click.echo("No agent stats recorded yet.")
+            return
+
+        for idx, row in enumerate(rows, 1):
+            agent = row["agent"]
+            count = row["count"]
+            click.echo(f"{orange}{idx}. {agent.ljust(20)} | {count} prompts{reset}")
+
+        click.echo("")
+    finally:
+        conn.close()
 
 
 @main.command()

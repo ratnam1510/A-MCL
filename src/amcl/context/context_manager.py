@@ -180,6 +180,9 @@ class ContextManager:
             },
         }
 
+        # Always include global preferences
+        result["global_preferences"] = self._storage.get_global_preferences()
+
         if "conversation" in inc:
             messages = self._conversation.get_recent(limit=50)
             result["conversation"] = {
@@ -317,6 +320,9 @@ class ContextManager:
 
     def mark_task_complete(self, task_id: str) -> None:
         self._storage.update_task(task_id, "completed")
+
+    def set_global_preference(self, category: str, preference: str) -> None:
+        self._storage.set_global_preference(category, preference, self._agent_name)
 
     def add_blocker(self, description: str) -> str:
         return self._storage.add_task(

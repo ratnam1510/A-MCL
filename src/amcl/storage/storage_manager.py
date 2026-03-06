@@ -247,6 +247,26 @@ class StorageManager:
             for r in rows
         ]
 
+    # ── Global Preferences ───────────────────────────────────────────
+
+    def set_global_preference(self, category: str, preference: str, agent: str) -> None:
+        self._conn.execute(
+            """INSERT INTO global_preferences (category, preference, source_agent)
+               VALUES (?, ?, ?)
+               ON CONFLICT(category) DO UPDATE SET
+                   preference=excluded.preference,
+                   source_agent=excluded.source_agent,
+                   updated_at=datetime('now')""",
+            (category, preference, agent),
+        )
+        self._conn.commit()
+
+    def get_global_preferences(self) -> dict[str, str]:
+        rows = self._conn.execute(
+            "SELECT category, preference FROM global_preferences ORDER BY category"
+        ).fetchall()
+        return {r["category"]: r["preference"] for r in rows}
+
     # ── Agent Sessions ───────────────────────────────────────────────
 
     def start_agent_session(
@@ -312,24 +332,33 @@ class StorageManager:
     # ── Search ───────────────────────────────────────────────────────
 
     def search_context(self, project_id: int, query: str) -> dict:
-        """Full-text search across messages, decisions, and tasks."""
+        """Full-text search across messages, decisions, and tasks using FTS5."""
+        # Sanitize query for FTS5 syntax (wrap in quotes if not already valid)
+        clean_query = query.replace('"', '""')
+        fts_query = f'"{clean_query}"*'
+        
+        # Fallback LIKE query for tasks which aren't FTS5 indexed yet
         q = f"%{query}%"
 
         messages = self._conn.execute(
-            """SELECT * FROM messages
-               WHERE project_id = ? AND content LIKE ?
-               ORDER BY timestamp LIMIT 20""",
-            (project_id, q),
+            """SELECT m.* 
+               FROM messages m
+               JOIN messages_fts fts ON m.rowid = fts.rowid
+               WHERE m.project_id = ? AND messages_fts MATCH ?
+               ORDER BY m.timestamp LIMIT 20""",
+            (project_id, fts_query),
         ).fetchall()
 
         decisions = self._conn.execute(
-            """SELECT * FROM decisions
-               WHERE project_id = ?
-                 AND (question LIKE ? OR answer LIKE ? OR reasoning LIKE ?)
-               ORDER BY timestamp LIMIT 20""",
-            (project_id, q, q, q),
+            """SELECT d.* 
+               FROM decisions d
+               JOIN decisions_fts fts ON d.id = fts.rowid
+               WHERE d.project_id = ? AND decisions_fts MATCH ?
+               ORDER BY d.timestamp LIMIT 20""",
+            (project_id, fts_query),
         ).fetchall()
 
+        # Tasks still use regular LIKE since they're metadata-heavy
         tasks = self._conn.execute(
             """SELECT * FROM tasks
                WHERE project_id = ? AND description LIKE ?
@@ -337,8 +366,19 @@ class StorageManager:
             (project_id, q),
         ).fetchall()
 
+        # Also search file changes now that we have FTS5!
+        file_changes = self._conn.execute(
+            """SELECT fc.* 
+               FROM file_changes fc
+               JOIN file_changes_fts fts ON fc.id = fts.rowid
+               WHERE fc.project_id = ? AND file_changes_fts MATCH ?
+               ORDER BY fc.timestamp LIMIT 20""",
+            (project_id, fts_query),
+        ).fetchall()
+
         return {
             "messages": [dict(r) for r in messages],
             "decisions": [dict(r) for r in decisions],
             "tasks": [dict(r) for r in tasks],
+            "file_changes": [dict(r) for r in file_changes],
         }
