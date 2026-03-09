@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,200..900,0..100,0..1;1,9..144,200..900,0..100,0..1&family=Azeret+Mono:wght@300;400;500;600&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg: #0C0A08;
+  --surface: #161210;
+  --surface-2: #1E1A16;
+  --surface-3: #272220;
+  --border: rgba(232, 224, 208, 0.07);
+  --border-hover: rgba(232, 224, 208, 0.13);
+  --tx: #E8E0D0;
+  --tx-2: #A69E90;
+  --tx-3: #6D655A;
+  --tx-4: #3A3530;
+  --tx-5: #252220;
+  --accent: #C4654A;
+  --accent-dim: rgba(196, 101, 74, 0.09);
+  --accent-border: rgba(196, 101, 74, 0.25);
+  --accent-glow: rgba(196, 101, 74, 0.6);
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--tx);
+  --font-display: 'Fraunces', 'Georgia', serif;
+  --font-body: 'Azeret Mono', 'Menlo', monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--tx);
+  font-family: 'Azeret Mono', 'Menlo', monospace;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: rgba(196, 101, 74, 0.2);
+  color: #fff;
+}
+
+/* Film grain */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  mix-blend-mode: overlay;
+  opacity: 0.032;
+}
+
+/* Ruled-paper horizontal lines */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 55px,
+    rgba(232, 224, 208, 0.018) 55px,
+    rgba(232, 224, 208, 0.018) 56px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes barGrow {
+  to { width: var(--w); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.85; }
+}
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(232, 224, 208, 0.08); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(232, 224, 208, 0.14); }

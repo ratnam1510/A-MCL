@@ -34,6 +34,7 @@ Homepage = "https://github.com/yourusername/amcl"
 Repository = "https://github.com/yourusername/amcl.git"
 
 [project.scripts]
+amcl = "amcl.cli:main"
 amcl-server = "amcl.cli:main"
 
 [tool.setuptools.packages.find]

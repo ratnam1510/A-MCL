@@ -1,2 +1,3 @@
 [console_scripts]
+amcl = amcl.cli:main
 amcl-server = amcl.cli:main

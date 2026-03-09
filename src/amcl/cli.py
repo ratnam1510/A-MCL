@@ -18,7 +18,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group()
-@click.version_option(version="1.1.0", prog_name="amcl-server")
+@click.version_option(version="1.1.0", prog_name="amcl")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -162,6 +162,366 @@ def stats():
         conn.close()
 
 
+def _gather_project_data(conn, pid):
+    """Gather all data for a single project by its ID."""
+    messages = [dict(r) for r in conn.execute(
+        "SELECT * FROM messages WHERE project_id = ? ORDER BY timestamp", (pid,)
+    ).fetchall()]
+    decisions = [dict(r) for r in conn.execute(
+        "SELECT * FROM decisions WHERE project_id = ? ORDER BY timestamp", (pid,)
+    ).fetchall()]
+    file_changes = [dict(r) for r in conn.execute(
+        "SELECT * FROM file_changes WHERE project_id = ? ORDER BY timestamp", (pid,)
+    ).fetchall()]
+    agent_stats = [dict(r) for r in conn.execute(
+        "SELECT agent, COUNT(*) as count FROM messages "
+        "WHERE project_id = ? AND agent != '' GROUP BY agent ORDER BY count DESC",
+        (pid,)
+    ).fetchall()]
+    return messages, decisions, file_changes, agent_stats
+
+
+def _group_messages_into_sessions(conn, pid, messages):
+    """Group messages into conversation sessions using agent_sessions or time gaps."""
+    # Try to use agent_sessions table
+    sessions = conn.execute(
+        "SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY started", (pid,)
+    ).fetchall()
+
+    if sessions:
+        grouped = []
+        for sess in sessions:
+            s_start = sess["started"]
+            s_end = sess["ended"] or "9999-12-31"
+            agent = sess["agent"]
+            sess_msgs = [m for m in messages if s_start <= m["timestamp"] <= s_end]
+            if sess_msgs:
+                ts = sess_msgs[0]["timestamp"][:10] if sess_msgs[0]["timestamp"] else "unknown"
+                grouped.append({
+                    "id": sess["id"],
+                    "agent": agent,
+                    "date": ts,
+                    "messages": sess_msgs,
+                    "count": len(sess_msgs),
+                })
+        # Catch any messages not in any session
+        all_sessioned = {id(m) for g in grouped for m in g["messages"]}
+        orphans = [m for m in messages if id(m) not in all_sessioned]
+        if orphans:
+            ts = orphans[0]["timestamp"][:10] if orphans[0]["timestamp"] else "unknown"
+            grouped.append({
+                "id": -1,
+                "agent": orphans[0].get("agent", "unknown"),
+                "date": ts,
+                "messages": orphans,
+                "count": len(orphans),
+            })
+        return grouped
+
+    # Fallback: group by time gaps (> 2 hours = new session)
+    if not messages:
+        return []
+
+    from datetime import datetime, timedelta
+
+    grouped = []
+    current_group = [messages[0]]
+
+    for m in messages[1:]:
+        try:
+            prev_ts = datetime.fromisoformat(current_group[-1]["timestamp"])
+            curr_ts = datetime.fromisoformat(m["timestamp"])
+            gap = (curr_ts - prev_ts).total_seconds()
+        except (ValueError, TypeError):
+            gap = 0
+
+        if gap > 7200:  # 2 hour gap → new session
+            ts = current_group[0]["timestamp"][:10] if current_group[0]["timestamp"] else "unknown"
+            agent = current_group[0].get("agent", "unknown")
+            grouped.append({
+                "id": len(grouped),
+                "agent": agent,
+                "date": ts,
+                "messages": current_group,
+                "count": len(current_group),
+            })
+            current_group = [m]
+        else:
+            current_group.append(m)
+
+    if current_group:
+        ts = current_group[0]["timestamp"][:10] if current_group[0]["timestamp"] else "unknown"
+        agent = current_group[0].get("agent", "unknown")
+        grouped.append({
+            "id": len(grouped),
+            "agent": agent,
+            "date": ts,
+            "messages": current_group,
+            "count": len(current_group),
+        })
+
+    return grouped
+
+
+def _upload_html(filepath):
+    """Upload a file to the custom A/MCL sharing backend and return the URL."""
+    import urllib.request
+    import json
+
+    boundary = "----AMCLShareBoundary"
+    filename = Path(filepath).name
+
+    with open(filepath, "rb") as f:
+        file_data = f.read()
+
+    # Build multipart form data
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: text/html\r\n"
+        f"\r\n"
+    ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
+
+    req = urllib.request.Request(
+        "https://amcl.jpdz.app/api/upload",
+        data=body,
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "A-MCL/1.1.0",
+        },
+        method="POST",
+    )
+
+    try:
+        resp = urllib.request.urlopen(req, timeout=30)
+        res_data = json.loads(resp.read().decode())
+        return res_data.get("url")
+    except Exception as e:
+        return None
+
+
+@main.command()
+@click.option("--output", "-o", default=None, help="Output HTML file path.")
+@click.option("--no-open", is_flag=True, help="Don't auto-open in browser.")
+@click.option("--all", "export_all", is_flag=True, help="Export all projects without picker.")
+@click.option("--url", "upload", is_flag=True, help="Upload and get a shareable link.")
+def share(output, no_open, export_all, upload):
+    """Export your A/MCL context as a beautiful shareable HTML page."""
+    if not DB_PATH.exists():
+        click.echo("❌ Not initialized (run `amcl setup`)")
+        return
+
+    import webbrowser
+    from amcl.share import generate_share_html
+    from amcl.storage.database import get_connection
+
+    o = "\033[38;5;208m"  # orange
+    d = "\033[2m"          # dim
+    r = "\033[0m"          # reset
+    g = "\033[38;5;156m"   # green
+
+    conn = get_connection()
+    try:
+        all_project_rows = conn.execute(
+            "SELECT p.*, "
+            "(SELECT COUNT(*) FROM messages WHERE project_id = p.id) as msg_count "
+            "FROM projects p ORDER BY p.updated_at DESC"
+        ).fetchall()
+
+        if not all_project_rows:
+            click.echo("❌ No projects found in database.")
+            return
+
+        total_all_msgs = sum(r["msg_count"] for r in all_project_rows)
+
+        # ── Tier 1: What to export ──
+        if export_all:
+            selected_rows = all_project_rows
+        else:
+            click.echo(f"\n{o}? What to export:{r}\n")
+            click.echo(f"   {g}1.{r} All projects ({len(all_project_rows)} projects, {total_all_msgs} messages)")
+            click.echo(f"   {g}2.{r} Pick a specific project")
+            click.echo("")
+            scope = click.prompt(f"  {d}Enter choice{r}", type=int, default=1)
+
+            if scope == 1:
+                selected_rows = all_project_rows
+            elif scope == 2:
+                # ── Tier 2: Pick a project ──
+                click.echo(f"\n{o}? Choose a project:{r}\n")
+                for idx, p in enumerate(all_project_rows, 1):
+                    name = p["name"]
+                    mc = p["msg_count"]
+                    path = p["path"]
+                    click.echo(f"   {g}{idx}.{r} {name} {d}— {mc} messages{r}")
+                    click.echo(f"      {d}{path}{r}")
+                    click.echo("")
+
+                pchoice = click.prompt(f"  {d}Enter number{r}", type=int, default=1)
+                if pchoice < 1 or pchoice > len(all_project_rows):
+                    click.echo("❌ Invalid choice.")
+                    return
+                selected_rows = [all_project_rows[pchoice - 1]]
+            else:
+                click.echo("❌ Invalid choice.")
+                return
+
+        # ── Gather data for selected projects ──
+        projects = []
+        total_msgs = 0
+        total_decs = 0
+        total_files = 0
+
+        for row in selected_rows:
+            pid = row["id"]
+            messages, decisions, file_changes, agent_stats = _gather_project_data(conn, pid)
+
+            # ── Tier 3: Conversation/session selection (only if single project) ──
+            if len(selected_rows) == 1 and not export_all and messages:
+                sessions = _group_messages_into_sessions(conn, pid, messages)
+
+                if len(sessions) > 1:
+                    click.echo(f"\n{o}? Choose conversations:{r}\n")
+                    click.echo(f"   {g}1.{r} All conversations ({len(sessions)} sessions, {len(messages)} messages)")
+                    click.echo(f"   {g}2.{r} Pick specific sessions")
+                    click.echo("")
+                    cchoice = click.prompt(f"  {d}Enter choice{r}", type=int, default=1)
+
+                    if cchoice == 2:
+                        click.echo(f"\n{o}? Select sessions {d}(comma-separated, e.g. 1,3){r}:\n")
+                        for sidx, sess in enumerate(sessions, 1):
+                            agent = sess["agent"]
+                            date = sess["date"]
+                            scount = sess["count"]
+                            click.echo(f"   {g}{sidx}.{r} {agent} {d}— {date} — {scount} messages{r}")
+
+                        click.echo("")
+                        sel_input = click.prompt(f"  {d}Enter numbers{r}", default="all")
+
+                        if sel_input.strip().lower() != "all":
+                            try:
+                                sel_indices = [int(x.strip()) - 1 for x in sel_input.split(",")]
+                                chosen_sessions = [sessions[i] for i in sel_indices if 0 <= i < len(sessions)]
+                            except (ValueError, IndexError):
+                                click.echo("❌ Invalid selection.")
+                                return
+
+                            # Filter messages to only chosen sessions
+                            chosen_msg_ids = {id(m) for s in chosen_sessions for m in s["messages"]}
+                            messages = [m for m in messages if id(m) in chosen_msg_ids]
+
+            projects.append({
+                "name": row["name"],
+                "path": row["path"],
+                "messages": messages,
+                "decisions": decisions,
+                "file_changes": file_changes,
+                "agent_stats": agent_stats,
+            })
+            total_msgs += len(messages)
+            total_decs += len(decisions)
+            total_files += len(file_changes)
+
+        try:
+            pref_rows = conn.execute("SELECT category, preference FROM global_preferences ORDER BY category").fetchall()
+            preferences = {rr["category"]: rr["preference"] for rr in pref_rows}
+        except Exception:
+            preferences = {}
+
+        # Generate HTML
+        html_content = generate_share_html(
+            projects=projects,
+            preferences=preferences,
+        )
+
+        # Write file
+        timestamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+        if len(projects) == 1:
+            safe_name = projects[0]["name"].replace(" ", "-").replace("/", "-").replace(":", "-")[:30]
+            filename = output or str(Path.home() / f"amcl-share-{safe_name}-{timestamp}.html")
+        else:
+            filename = output or str(Path.home() / f"amcl-share-{timestamp}.html")
+
+        Path(filename).write_text(html_content, encoding="utf-8")
+
+        click.echo(f"\n{o}🔗 Exported to: {filename}{r}")
+        click.echo(f"   📦 {len(projects)} projects  •  💬 {total_msgs} messages  •  🧠 {total_decs} decisions  •  📁 {total_files} files")
+
+        # ── Upload if --url ──
+        if upload:
+            click.echo(f"\n   {d}📤 Uploading to amcl.jpdz.app...{r}")
+            link = _upload_html(filename)
+            if link:
+                click.echo(f"   {g}✅ Share this link:{r} {link}")
+            else:
+                click.echo(f"   ❌ Upload failed. Share the file manually: {filename}")
+
+        if not no_open and not upload:
+            webbrowser.open(f"file://{filename}")
+            click.echo("   🌐 Opened in browser!")
+
+        click.echo("")
+    finally:
+        conn.close()
+
+
+@main.command("import")
+def import_history():
+    """Import conversation history from AI agents (Cursor, Claude Code, etc.)."""
+    if not DB_PATH.exists():
+        click.echo("❌ Not initialized. Run `amcl setup` first.")
+        return
+
+    from amcl.importers import scan_all, import_into_db
+    from amcl.storage.database import get_connection
+
+    o = "\033[38;5;208m"
+    d = "\033[2m"
+    r = "\033[0m"
+    g = "\033[38;5;156m"
+
+    click.echo(f"\n{o}🔍 Scanning for agent history...{r}\n")
+
+    results = scan_all()
+
+    if not results:
+        click.echo("   ❌ No agent history found on this machine.")
+        click.echo(f"   {d}Looked for: ~/.cursor/projects/, ~/.claude/history.jsonl{r}")
+        click.echo("")
+        return
+
+    total_sessions = 0
+    total_msgs = 0
+
+    for agent_name, sessions in results.items():
+        n_sess = len(sessions)
+        n_msgs = sum(len(s["messages"]) for s in sessions)
+        projects = set(s["project_name"] for s in sessions)
+        total_sessions += n_sess
+        total_msgs += n_msgs
+        click.echo(f"   {g}✅{r} {agent_name} — {n_sess} sessions, {n_msgs} messages across {len(projects)} projects")
+
+    click.echo("")
+
+    if not click.confirm(f"{o}Import {total_msgs} messages into A/MCL?{r}", default=True):
+        click.echo("   Cancelled.")
+        return
+
+    conn = get_connection()
+    try:
+        summary = import_into_db(conn, results)
+        click.echo(f"\n   {g}📥 Done!{r}")
+        click.echo(f"   Imported: {summary['imported']} messages")
+        if summary["new_projects"]:
+            click.echo(f"   New projects: {summary['new_projects']}")
+        if summary["skipped"]:
+            click.echo(f"   {d}Skipped (duplicates): {summary['skipped']}{r}")
+        click.echo("")
+    finally:
+        conn.close()
+
+
+
 @main.command()
 def check():
     """Check if A/MCL is configured in detected AI agents."""
@@ -199,8 +559,20 @@ def check():
 
                 if is_configured:
                     env = amcl_config.get("env", {}) if amcl_config else {}
-                    agent_env_name = env.get("AMCL_AGENT_NAME", "NOT SET")
                     cmd = amcl_config.get("command", "?") if amcl_config else "?"
+                    # OpenCode bakes env vars into the command array
+                    if isinstance(cmd, list):
+                        agent_env_name = "NOT SET"
+                        binary = "?"
+                        for item in cmd:
+                            if isinstance(item, str) and item.startswith("AMCL_AGENT_NAME="):
+                                agent_env_name = item.split("=", 1)[1]
+                            elif isinstance(item, str) and not item.startswith(("env", "AMCL_")):
+                                if "/" in item:
+                                    binary = item
+                        cmd = binary
+                    else:
+                        agent_env_name = env.get("AMCL_AGENT_NAME", "NOT SET")
                     click.echo(f"   ✅ {agent_name}: agent={agent_env_name}, cmd={cmd}")
                 else:
                     click.echo(f"   ❌ {agent_name}: Installed, but A/MCL NOT configured")

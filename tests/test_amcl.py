@@ -100,6 +100,7 @@ def test_database_schema_idempotent():
 # ─────────────────────────────────────────────────────────────
 # 2. PROJECT DETECTION TESTS
 # ─────────────────────────────────────────────────────────────
+EXPECTED_VERSION = "1.1.0"
 
 def test_detect_project_with_explicit_path():
     """Project detection works when given an explicit directory."""

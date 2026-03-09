@@ -3,6 +3,8 @@ pyproject.toml
 src/amcl/__init__.py
 src/amcl/__main__.py
 src/amcl/cli.py
+src/amcl/importers.py
+src/amcl/share.py
 src/amcl/types.py
 src/amcl/context/__init__.py
 src/amcl/context/context_manager.py
