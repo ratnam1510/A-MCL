@@ -232,36 +232,27 @@ export default function Home() {
           a:mcl
         </span>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "28px" }}>
-          {[
-            { label: "Docs", href: "https://github.com/ratnam1510/A-MCL#readme" },
-            { label: "PyPI", href: "https://pypi.org/project/amcl-server/" },
-            { label: "GitHub", href: "https://github.com/ratnam1510/A-MCL" },
-          ].map(({ label, href }) => (
-            <a
-              key={label}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                fontSize: "12px",
-                fontWeight: 500,
-                color: TX4,
-                textDecoration: "none",
-                letterSpacing: "0.06em",
-                transition: `color 0.2s ${E}`,
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.color = TX2;
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLAnchorElement).style.color = TX4;
-              }}
-            >
-              {label}
-            </a>
-          ))}
-        </div>
+        <a
+          href="https://pypi.org/project/amcl-server/"
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            fontSize: "12px",
+            fontWeight: 500,
+            color: TX4,
+            textDecoration: "none",
+            letterSpacing: "0.06em",
+            transition: `color 0.2s ${E}`,
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLAnchorElement).style.color = TX2;
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLAnchorElement).style.color = TX4;
+          }}
+        >
+          PyPI
+        </a>
       </nav>
 
       {/* ── Hero — full viewport width ── */}
