@@ -18,7 +18,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group()
-@click.version_option(version="1.1.0", prog_name="amcl")
+@click.version_option(version="1.2.0", prog_name="amcl")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -287,7 +287,7 @@ def _upload_html(filepath):
         data=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "A-MCL/1.1.0",
+            "User-Agent": "A-MCL/1.2.0",
         },
         method="POST",
     )
@@ -297,6 +297,40 @@ def _upload_html(filepath):
         res_data = json.loads(resp.read().decode())
         return res_data.get("url")
     except Exception as e:
+        return None
+
+
+def _upload_json(projects, preferences):
+    """Upload JSON data to the A/MCL sharing backend and return the share URL.
+
+    The backend renders the data as a proper Next.js page, so the share page
+    uses the exact same TSX/CSS as the home page — no style mismatches.
+    """
+    import urllib.request
+    import json
+    from datetime import datetime
+
+    payload = json.dumps({
+        "projects": projects,
+        "preferences": preferences,
+        "exported_at": datetime.now().strftime("%b %d, %Y"),
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://amcl.jpdz.app/api/share",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "A-MCL/1.2.0",
+        },
+        method="POST",
+    )
+
+    try:
+        resp = urllib.request.urlopen(req, timeout=30)
+        res_data = json.loads(resp.read().decode())
+        return res_data.get("url")
+    except Exception:
         return None
 
 
@@ -450,7 +484,9 @@ def share(output, no_open, export_all, upload):
         # ── Upload if --url ──
         if upload:
             click.echo(f"\n   {d}📤 Uploading to amcl.jpdz.app...{r}")
-            link = _upload_html(filename)
+            link = _upload_json(projects, preferences)
+            if not link:
+                link = _upload_html(filename)
             if link:
                 click.echo(f"   {g}✅ Share this link:{r} {link}")
             else:
