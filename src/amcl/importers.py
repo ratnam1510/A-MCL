@@ -17,40 +17,41 @@ def _slug_to_path(slug: str) -> str:
     """Convert Cursor's path slug back to a filesystem path.
     e.g. 'Users-ratnamshah-A-MCL' → '/Users/ratnamshah/A:MCL'
     """
-    # Cursor slugifies paths by replacing / with - and : with -
-    # We reconstruct by prepending / and replacing - with /
-    # Then check if the path exists; if not, try variations
+    import sys
     parts = slug.split("-")
 
-    # Try to reconstruct the path
-    # The path starts with /, so first part is the root after Users
-    candidate = "/" + "/".join(parts)
+    if sys.platform == "win32":
+        if len(parts[0]) == 1 and parts[0].isalpha():
+            current = parts[0] + ":\\"
+            remaining = parts[1:]
+        else:
+            current = "C:\\"
+            remaining = parts
+    else:
+        current = "/"
+        remaining = parts
+
+    # Try simple exact match first
+    candidate = os.path.join(current, *remaining) if remaining else current
     if os.path.exists(candidate):
         return candidate
 
-    # Try common patterns: some dirs might have hyphens
-    # Walk through and find the longest matching prefix
-    best = "/"
-    remaining = parts[:]
-    current = "/"
-
+    # Try matching incrementally
     for i, part in enumerate(remaining):
         test = os.path.join(current, part)
         if os.path.exists(test):
             current = test
         else:
-            # Maybe this part should be joined with the previous using :
+            # Maybe it should be joined with Previous using :
             test_colon = current + ":" + part
             if os.path.exists(test_colon):
                 current = test_colon
             else:
-                # Try joining with hyphen (directory name has hyphen)
                 test_hyphen = current + "-" + part
                 if os.path.exists(test_hyphen):
                     current = test_hyphen
                 else:
-                    # Give up, use current + remaining as-is
-                    rest = "/".join(remaining[i:])
+                    rest = os.path.join(*remaining[i:]) if remaining[i:] else ""
                     current = os.path.join(current, rest)
                     break
 

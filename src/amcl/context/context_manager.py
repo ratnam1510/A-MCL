@@ -133,7 +133,8 @@ class ContextManager:
 
             uri = str(roots_result.roots[0].uri)
             if uri.startswith("file://"):
-                decoded = urllib.parse.unquote(uri[len("file://"):])
+                import urllib.request
+                decoded = urllib.request.url2pathname(uri[len("file://"):])
                 logger.info("Resolved workspace root from MCP client: %s", decoded)
                 return decoded
 

@@ -134,10 +134,9 @@ def stats():
     conn = get_connection()
     try:
         rows = conn.execute('''
-            SELECT agent, COUNT(*) as count 
+            SELECT COALESCE(NULLIF(agent, ''), 'unknown') as agent, COUNT(*) as count 
             FROM messages 
-            WHERE agent != '' AND agent IS NOT NULL 
-            GROUP BY agent 
+            GROUP BY COALESCE(NULLIF(agent, ''), 'unknown') 
             ORDER BY count DESC
         ''').fetchall()
 
@@ -174,8 +173,8 @@ def _gather_project_data(conn, pid):
         "SELECT * FROM file_changes WHERE project_id = ? ORDER BY timestamp", (pid,)
     ).fetchall()]
     agent_stats = [dict(r) for r in conn.execute(
-        "SELECT agent, COUNT(*) as count FROM messages "
-        "WHERE project_id = ? AND agent != '' GROUP BY agent ORDER BY count DESC",
+        "SELECT COALESCE(NULLIF(agent, ''), 'unknown') as agent, COUNT(*) as count FROM messages "
+        "WHERE project_id = ? GROUP BY COALESCE(NULLIF(agent, ''), 'unknown') ORDER BY count DESC",
         (pid,)
     ).fetchall()]
     return messages, decisions, file_changes, agent_stats
@@ -526,6 +525,10 @@ def import_history():
         click.echo("")
         return
 
+    click.echo(f"   {d}Note: Amp, Antigravity, and OpenCode do not save local plain-text logs,{r}")
+    click.echo(f"   {d}so they cannot be imported retroactively. However, A/MCL will{r}")
+    click.echo(f"   {d}capture all of their conversations going forward!{r}\n")
+
     total_sessions = 0
     total_msgs = 0
 
@@ -713,11 +716,19 @@ def _install_agent_rules() -> list[str]:
     """Install A/MCL rules into every detected agent's global config."""
     home = Path.home()
     installed = []
+    
+    import sys
+    if sys.platform == "win32":
+        app_data = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        cursor_settings_file = app_data / "Cursor" / "User" / "settings.json"
+    elif sys.platform == "darwin":
+        cursor_settings_file = home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json"
+    else:
+        cursor_settings_file = home / ".config" / "Cursor" / "User" / "settings.json"
 
     # ── Cursor: ~/.cursor/rules/amcl.mdc AND settings.json ──
     cursor_rules_dir = home / ".cursor" / "rules"
     cursor_rule_file = cursor_rules_dir / "amcl.mdc"
-    cursor_settings_file = home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json"
     if (home / ".cursor").exists():
         try:
             cursor_rules_dir.mkdir(parents=True, exist_ok=True)
@@ -782,7 +793,11 @@ def _install_agent_rules() -> list[str]:
             pass
 
     # ── OpenCode: ~/.config/opencode/AGENTS.md ──
-    opencode_dir = home / ".config" / "opencode"
+    if sys.platform == "win32":
+        opencode_dir = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "opencode"
+    else:
+        opencode_dir = home / ".config" / "opencode"
+        
     opencode_file = opencode_dir / "AGENTS.md"
     if opencode_dir.exists():
         try:
@@ -843,19 +858,53 @@ def _find_script_path() -> str:
 
 def _get_agent_config_locations(home: Path) -> dict[str, list[Path]]:
     """Map of agent names to their MCP config file paths."""
-    return {
-        "Claude Desktop": [
-            home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
-            home / ".config" / "claude" / "claude_desktop_config.json",
-        ],
-        "Antigravity": [home / ".gemini" / "antigravity" / "mcp_config.json"],
-        "Cursor": [home / ".cursor" / "mcp.json"],
-        "Amp": [home / ".config" / "amp" / "settings.json"],
-        "Generic MCP": [home / ".mcp" / "config.json"],
-        "Roo / Cline (VSCode)": [home / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
-        "Roo / Cline (Cursor)": [home / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
-        "OpenCode": [home / ".config" / "opencode" / "opencode.json"],
-    }
+    import sys
+
+    if sys.platform == "win32":
+        app_data = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        local_app_data = Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local"))
+        return {
+            "Claude Desktop": [
+                app_data / "Claude" / "claude_desktop_config.json",
+                local_app_data / "Claude" / "claude_desktop_config.json",
+                home / ".config" / "claude" / "claude_desktop_config.json",
+            ],
+            "Antigravity": [home / ".gemini" / "antigravity" / "mcp_config.json"],
+            "Cursor": [
+                app_data / "Cursor" / "User" / "globalStorage" / "mcp.json",
+                home / ".cursor" / "mcp.json"
+            ],
+            "Amp": [app_data / "amp" / "settings.json", home / ".config" / "amp" / "settings.json"],
+            "Generic MCP": [home / ".mcp" / "config.json"],
+            "Roo / Cline (VSCode)": [app_data / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
+            "Roo / Cline (Cursor)": [app_data / "Cursor" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
+            "OpenCode": [app_data / "opencode" / "opencode.json", home / ".config" / "opencode" / "opencode.json"],
+        }
+    elif sys.platform == "darwin":
+        return {
+            "Claude Desktop": [
+                home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+                home / ".config" / "claude" / "claude_desktop_config.json",
+            ],
+            "Antigravity": [home / ".gemini" / "antigravity" / "mcp_config.json"],
+            "Cursor": [home / ".cursor" / "mcp.json"],
+            "Amp": [home / ".config" / "amp" / "settings.json"],
+            "Generic MCP": [home / ".mcp" / "config.json"],
+            "Roo / Cline (VSCode)": [home / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
+            "Roo / Cline (Cursor)": [home / "Library" / "Application Support" / "Cursor" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
+            "OpenCode": [home / ".config" / "opencode" / "opencode.json"],
+        }
+    else: # linux
+        return {
+            "Claude Desktop": [home / ".config" / "claude" / "claude_desktop_config.json"],
+            "Antigravity": [home / ".gemini" / "antigravity" / "mcp_config.json"],
+            "Cursor": [home / ".cursor" / "mcp.json"],
+            "Amp": [home / ".config" / "amp" / "settings.json"],
+            "Generic MCP": [home / ".mcp" / "config.json"],
+            "Roo / Cline (VSCode)": [home / ".config" / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
+            "Roo / Cline (Cursor)": [home / ".config" / "Cursor" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"],
+            "OpenCode": [home / ".config" / "opencode" / "opencode.json"],
+        }
 
 
 _AGENT_ENV_NAMES = {
@@ -928,18 +977,10 @@ def _try_auto_register(script_path: str) -> list[str]:
                 elif config_path.name == "opencode.json":
                     existing.setdefault("mcp", {})
                     if "amcl" not in existing["mcp"]:
-                        # OpenCode uses specific format
-                        existing["mcp"]["amcl"] = {
-                            "type": "local",
-                            "command": [
-                                "env",
-                                f"AMCL_DATA_DIR={config['amcl']['env']['AMCL_DATA_DIR']}",
-                                f"AMCL_AGENT_NAME={config['amcl']['env']['AMCL_AGENT_NAME']}",
-                                f"AMCL_LOG_LEVEL={config['amcl']['env']['AMCL_LOG_LEVEL']}",
-                                config["amcl"]["command"]
-                            ] + config["amcl"].get("args", []),
-                            "enabled": True
-                        }
+                        # OpenCode uses standard FastMCP format but under 'mcp' instead of 'mcpServers'
+                        existing["mcp"]["amcl"] = config["amcl"].copy()
+                        existing["mcp"]["amcl"]["enabled"] = True
+                        existing["mcp"]["amcl"]["type"] = "local"
                         modified = True
                     else:
                         is_configured = True

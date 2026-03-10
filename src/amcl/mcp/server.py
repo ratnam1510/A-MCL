@@ -48,6 +48,48 @@ This ensures the next agent can seamlessly continue where you left off.\
 """
 
 
+def _detect_agent_from_process() -> str:
+    """Walk up the process tree to find the agent name if env vars are missing."""
+    try:
+        import psutil
+        import os
+        current = psutil.Process(os.getpid())
+        
+        while current and current.pid != 1:
+            try:
+                cmd = " ".join(current.cmdline()).lower()
+                name = current.name().lower()
+            except (psutil.AccessDenied, psutil.ZombieProcess):
+                break
+                
+            if "cursor" in cmd or "cursor" in name:
+                return "cursor"
+            if "claude" in cmd or "claude" in name:
+                return "claude"
+            if "amp" in cmd or "amp" in name:
+                return "amp"
+            if "opencode" in cmd or "opencode" in name:
+                return "opencode"
+            if "windsurf" in cmd or "windsurf" in name:
+                return "windsurf"
+            if "cline" in cmd or "roo-cline" in cmd:
+                return "roo-cline"
+            if "antigravity" in cmd or "antigravity" in name:
+                return "antigravity"
+            
+            # Special VSCode check (only if not one of the specific forks above)
+            if "code" in cmd or "code" in name:
+                if "rooveterinaryinc" in cmd:
+                    return "roo-cline"
+                return "vscode"
+                
+            current = current.parent()
+    except Exception:
+        pass
+    
+    return "unknown"
+
+
 def create_server(
     project_dir: str | None = None,
     agent_name: str | None = None,
@@ -59,7 +101,10 @@ def create_server(
     Returns (server, context_manager) so the caller can manage lifecycle.
     """
     # Resolve agent name from env or argument
-    _agent = agent_name or os.environ.get("AMCL_AGENT_NAME", "unknown")
+    _agent = agent_name or os.environ.get("AMCL_AGENT_NAME")
+    if not _agent or _agent == "unknown":
+        _agent = _detect_agent_from_process()
+        
     _project = project_dir or os.environ.get("AMCL_PROJECT_DIR")
 
     # Create context manager
