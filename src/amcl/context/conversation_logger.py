@@ -32,18 +32,18 @@ class ConversationLogger:
             context_note=context_note,
         )
 
-    def get_recent(self, limit: int = 50) -> list[ConversationMessage]:
+    def get_recent(self, limit: int = 50, since: str | None = None) -> list[ConversationMessage]:
         """Return the most recent messages (oldest → newest)."""
-        return self._storage.get_messages(self._project_id, limit=limit)
+        return self._storage.get_messages(self._project_id, limit=limit, since=since)
 
-    def summarize(self, max_messages: int = 200) -> str:
+    def summarize(self, max_messages: int = 200, since: str | None = None) -> str:
         """
         Generate a plain-text summary of the conversation.
 
         Uses extractive summarization: takes the first user message
         (the original goal) plus the most recent messages for context.
         """
-        messages = self._storage.get_messages(self._project_id, limit=max_messages)
+        messages = self._storage.get_messages(self._project_id, limit=max_messages, since=since)
         if not messages:
             return "No conversation history."
 

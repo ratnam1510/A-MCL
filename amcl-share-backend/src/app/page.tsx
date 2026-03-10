@@ -173,6 +173,8 @@ function Feature({
 export default function Home() {
   const [copiedCli, setCopiedCli] = useState(false);
   const [copiedPip, setCopiedPip] = useState(false);
+  const [copiedSetup, setCopiedSetup] = useState(false);
+  const [copiedImport, setCopiedImport] = useState(false);
 
   const copy = (text: string, setter: (v: boolean) => void) => {
     navigator.clipboard.writeText(text);
@@ -342,11 +344,25 @@ export default function Home() {
               delay="0.18s"
             />
             <CmdRow
+              label="Setup"
+              command="amcl setup"
+              copied={copiedSetup}
+              onCopy={() => copy("amcl setup", setCopiedSetup)}
+              delay="0.20s"
+            />
+            <CmdRow
+              label="Import History"
+              command="amcl import"
+              copied={copiedImport}
+              onCopy={() => copy("amcl import", setCopiedImport)}
+              delay="0.22s"
+            />
+            <CmdRow
               label="Share"
               command="amcl share --url"
               copied={copiedCli}
               onCopy={() => copy("amcl share --url", setCopiedCli)}
-              delay="0.22s"
+              delay="0.24s"
             />
           </div>
         </div>

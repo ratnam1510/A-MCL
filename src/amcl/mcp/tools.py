@@ -187,3 +187,19 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
             "preference": preference,
             "scope": "global"
         })
+
+    @mcp.tool()
+    async def context_reset_session(ctx: Context = None) -> str:
+        """Clear all historical context for the current session.
+
+        CALL THIS if the user explicitly asks to 'start over', 'ignore history',
+        or 'start a fresh chat'. This will isolate the current conversation
+        from all previous project history (messages, decisions, tasks)
+        for the remainder of this session.
+        """
+        await ctx_mgr.ensure_project(ctx)
+        ctx_mgr.reset_session()
+        return json.dumps({
+            "status": "ok",
+            "message": "Session reset. Previous project history will be ignored in this chat."
+        })

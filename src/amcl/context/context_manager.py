@@ -52,6 +52,7 @@ class ContextManager:
         self._project_info: dict | None = None
         self._conversation: ConversationLogger | None = None
         self._watcher: FileWatcher | None = None
+        self._history_cutoff: str | None = None
 
         # Concurrency guard for lazy init
         self._init_lock = asyncio.Lock()
@@ -157,7 +158,6 @@ class ContextManager:
             logger.warning("Error during shutdown: %s", e)
 
     # ── Context Retrieval ────────────────────────────────────────────
-
     def get_current_context(
         self,
         include: list[str] | None = None,
@@ -165,9 +165,12 @@ class ContextManager:
         """
         Return the full context snapshot, optionally filtered by
         sections: conversation, files, tasks, reasoning, agents.
+
+        Respects self._history_cutoff if set.
         """
         inc = set(include or ["conversation", "files", "tasks", "reasoning", "agents"])
         result: dict[str, Any] = {}
+        cutoff = self._history_cutoff
 
         # Always include project
         result["project"] = {
@@ -185,14 +188,14 @@ class ContextManager:
         result["global_preferences"] = self._storage.get_global_preferences()
 
         if "conversation" in inc:
-            messages = self._conversation.get_recent(limit=50)
+            messages = self._conversation.get_recent(limit=50, since=cutoff)
             result["conversation"] = {
                 "messages": [asdict(m) for m in messages],
-                "summary": self._conversation.summarize(),
+                "summary": self._conversation.summarize(since=cutoff),
             }
 
         if "files" in inc:
-            changes = self._storage.get_file_changes(self._project_id)
+            changes = self._storage.get_file_changes(self._project_id, since=cutoff)
             # Deduplicate to show only the latest known active files
             active_files = list(
                 dict.fromkeys(
@@ -205,20 +208,20 @@ class ContextManager:
             }
 
         if "tasks" in inc:
-            tasks = self._storage.get_tasks(self._project_id)
+            tasks = self._storage.get_tasks(self._project_id, since=cutoff)
             result["state"] = {
                 "tasks": [asdict(t) for t in tasks],
                 "current_goal": self._infer_goal(tasks),
             }
 
         if "reasoning" in inc:
-            decisions = self._storage.get_decisions(self._project_id)
+            decisions = self._storage.get_decisions(self._project_id, since=cutoff)
             result["reasoning"] = {
                 "decisions": [asdict(d) for d in decisions],
             }
 
         if "agents" in inc:
-            sessions = self._storage.get_agent_sessions(self._project_id)
+            sessions = self._storage.get_agent_sessions(self._project_id, since=cutoff)
             result["agents"] = {
                 "history": [asdict(s) for s in sessions],
             }
@@ -296,7 +299,17 @@ class ContextManager:
 
     def query_context(self, query: str) -> dict:
         """Search across all context tables."""
-        return self._storage.search_context(self._project_id, query)
+        return self._storage.search_context(self._project_id, query, since=self._history_cutoff)
+
+    def reset_session(self) -> None:
+        """
+        Mark the start of a completely fresh session.
+        Future context retrieval in this process will ignore everything
+        before this moment.
+        """
+        from amcl.types import _now
+        self._history_cutoff = _now()
+        logger.info("Session reset. History cutoff set to %s", self._history_cutoff)
 
     def get_files_changed_since_switch(self) -> list[dict]:
         """Files changed since the current agent session started."""

@@ -92,15 +92,24 @@ class StorageManager:
         return mid
 
     def get_messages(
-        self, project_id: int, limit: int = 50
+        self, project_id: int, limit: int = 50, since: str | None = None
     ) -> list[ConversationMessage]:
-        rows = self._conn.execute(
-            """SELECT * FROM messages
-               WHERE project_id = ?
-               ORDER BY timestamp DESC
-               LIMIT ?""",
-            (project_id, limit),
-        ).fetchall()
+        if since:
+            rows = self._conn.execute(
+                """SELECT * FROM messages
+                   WHERE project_id = ? AND timestamp >= ?
+                   ORDER BY timestamp DESC
+                   LIMIT ?""",
+                (project_id, since, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """SELECT * FROM messages
+                   WHERE project_id = ?
+                   ORDER BY timestamp DESC
+                   LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
         return [
             ConversationMessage(
                 id=r["id"],
@@ -187,11 +196,17 @@ class StorageManager:
         )
         self._conn.commit()
 
-    def get_tasks(self, project_id: int) -> list[TaskItem]:
-        rows = self._conn.execute(
-            "SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at",
-            (project_id,),
-        ).fetchall()
+    def get_tasks(self, project_id: int, since: str | None = None) -> list[TaskItem]:
+        if since:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE project_id = ? AND created_at >= ? ORDER BY created_at",
+                (project_id, since),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at",
+                (project_id,),
+            ).fetchall()
         return [
             TaskItem(
                 id=r["id"],
@@ -230,11 +245,17 @@ class StorageManager:
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
-    def get_decisions(self, project_id: int) -> list[Decision]:
-        rows = self._conn.execute(
-            "SELECT * FROM decisions WHERE project_id = ? ORDER BY timestamp",
-            (project_id,),
-        ).fetchall()
+    def get_decisions(self, project_id: int, since: str | None = None) -> list[Decision]:
+        if since:
+            rows = self._conn.execute(
+                "SELECT * FROM decisions WHERE project_id = ? AND timestamp >= ? ORDER BY timestamp",
+                (project_id, since),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM decisions WHERE project_id = ? ORDER BY timestamp",
+                (project_id,),
+            ).fetchall()
         return [
             Decision(
                 timestamp=r["timestamp"],
@@ -302,13 +323,21 @@ class StorageManager:
         )
         self._conn.commit()
 
-    def get_agent_sessions(self, project_id: int) -> list[AgentSession]:
-        rows = self._conn.execute(
-            """SELECT * FROM agent_sessions
-               WHERE project_id = ?
-               ORDER BY started""",
-            (project_id,),
-        ).fetchall()
+    def get_agent_sessions(self, project_id: int, since: str | None = None) -> list[AgentSession]:
+        if since:
+            rows = self._conn.execute(
+                """SELECT * FROM agent_sessions
+                   WHERE project_id = ? AND started >= ?
+                   ORDER BY started""",
+                (project_id, since),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """SELECT * FROM agent_sessions
+                   WHERE project_id = ?
+                   ORDER BY started""",
+                (project_id,),
+            ).fetchall()
         return [
             AgentSession(
                 agent=r["agent"],
@@ -331,7 +360,7 @@ class StorageManager:
 
     # ── Search ───────────────────────────────────────────────────────
 
-    def search_context(self, project_id: int, query: str) -> dict:
+    def search_context(self, project_id: int, query: str, since: str | None = None) -> dict:
         """Full-text search across messages, decisions, and tasks using FTS5."""
         # Sanitize query for FTS5 syntax (wrap in quotes if not already valid)
         clean_query = query.replace('"', '""')
@@ -340,30 +369,32 @@ class StorageManager:
         # Fallback LIKE query for tasks which aren't FTS5 indexed yet
         q = f"%{query}%"
 
+        since_str = since if since else "1970-01-01"
+
         messages = self._conn.execute(
             """SELECT m.* 
                FROM messages m
                JOIN messages_fts fts ON m.rowid = fts.rowid
-               WHERE m.project_id = ? AND messages_fts MATCH ?
+               WHERE m.project_id = ? AND m.timestamp >= ? AND messages_fts MATCH ?
                ORDER BY m.timestamp LIMIT 20""",
-            (project_id, fts_query),
+            (project_id, since_str, fts_query),
         ).fetchall()
 
         decisions = self._conn.execute(
             """SELECT d.* 
                FROM decisions d
                JOIN decisions_fts fts ON d.id = fts.rowid
-               WHERE d.project_id = ? AND decisions_fts MATCH ?
+               WHERE d.project_id = ? AND d.timestamp >= ? AND decisions_fts MATCH ?
                ORDER BY d.timestamp LIMIT 20""",
-            (project_id, fts_query),
+            (project_id, since_str, fts_query),
         ).fetchall()
 
         # Tasks still use regular LIKE since they're metadata-heavy
         tasks = self._conn.execute(
             """SELECT * FROM tasks
-               WHERE project_id = ? AND description LIKE ?
+               WHERE project_id = ? AND created_at >= ? AND description LIKE ?
                ORDER BY created_at LIMIT 20""",
-            (project_id, q),
+            (project_id, since_str, q),
         ).fetchall()
 
         # Also search file changes now that we have FTS5!
@@ -371,9 +402,9 @@ class StorageManager:
             """SELECT fc.* 
                FROM file_changes fc
                JOIN file_changes_fts fts ON fc.id = fts.rowid
-               WHERE fc.project_id = ? AND file_changes_fts MATCH ?
+               WHERE fc.project_id = ? AND fc.timestamp >= ? AND file_changes_fts MATCH ?
                ORDER BY fc.timestamp LIMIT 20""",
-            (project_id, fts_query),
+            (project_id, since_str, fts_query),
         ).fetchall()
 
         return {
