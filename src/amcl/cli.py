@@ -18,7 +18,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="1.2.2", prog_name="amcl")
+@click.version_option(version="1.2.4", prog_name="amcl")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -599,7 +599,9 @@ def check():
                 if is_configured:
                     env = amcl_config.get("env", {}) if amcl_config else {}
                     cmd = amcl_config.get("command", "?") if amcl_config else "?"
-                    # OpenCode bakes env vars into the command array
+                    args = amcl_config.get("args", []) if amcl_config else []
+                    
+                    # 1. OpenCode/Custom array commands
                     if isinstance(cmd, list):
                         agent_env_name = "NOT SET"
                         binary = "?"
@@ -610,8 +612,17 @@ def check():
                                 if "/" in item:
                                     binary = item
                         cmd = binary
+                    # 2. Check traditional 'env' variable
+                    elif env.get("AMCL_AGENT_NAME"):
+                        agent_env_name = env.get("AMCL_AGENT_NAME")
+                    # 3. Check if env is passed in args array (e.g. command: "env", args: ["AMCL_AGENT_NAME=..."])
                     else:
-                        agent_env_name = env.get("AMCL_AGENT_NAME", "NOT SET")
+                        agent_env_name = "NOT SET"
+                        for item in args:
+                            if isinstance(item, str) and item.startswith("AMCL_AGENT_NAME="):
+                                agent_env_name = item.split("=", 1)[1]
+                                break
+
                     click.echo(f"   ✅ {agent_name}: agent={agent_env_name}, cmd={cmd}")
                 else:
                     click.echo(f"   ❌ {agent_name}: Installed, but A/MCL NOT configured")

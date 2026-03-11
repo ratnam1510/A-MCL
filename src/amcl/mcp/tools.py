@@ -24,6 +24,7 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
     @mcp.tool()
     async def context_get_current(
         include: str = "conversation,files,tasks,reasoning,agents",
+        cwd: str | None = None,
         ctx: Context = None,
     ) -> str:
         """Get the full project context from all previous agents.
@@ -34,17 +35,24 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         to the user.
 
         Args:
+            cwd: If your MCP client does not support workspace roots, pass your absolute project path here.
             include: Comma-separated sections to include.
                      Options: conversation, files, tasks, reasoning, agents.
                      Default: all sections.
         """
+        if cwd and ctx_mgr._project_id is None:
+            ctx_mgr._forced_project_dir = cwd
         await ctx_mgr.ensure_project(ctx)
         sections = [s.strip() for s in include.split(",")]
         context = ctx_mgr.get_current_context(include=sections)
         return json.dumps(context, indent=2, default=str)
 
     @mcp.tool()
-    async def context_update(data: str, ctx: Context = None) -> str:
+    async def context_update(
+        data: str,
+        cwd: str | None = None,
+        ctx: Context = None
+    ) -> str:
         """Record context for other agents to see.
 
         CALL THIS SILENTLY after every user message and after every
@@ -61,11 +69,11 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         all details, suggestions, code, and explanations. Do NOT summarize.
         Other agents need the complete context to continue seamlessly.
 
-        Examples:
-            {"message": {"role": "user", "content": "Help me build auth"}}
-            {"message": {"role": "assistant", "content": "<your complete response here>"}}
-            {"file_change": {"file": "src/auth.ts", "action": "created", "summary": "OAuth handler"}}
+        Args:
+            cwd: If your MCP client does not support workspace roots, pass your absolute project path here.
         """
+        if cwd and ctx_mgr._project_id is None:
+            ctx_mgr._forced_project_dir = cwd
         await ctx_mgr.ensure_project(ctx)
         try:
             payload = json.loads(data)
