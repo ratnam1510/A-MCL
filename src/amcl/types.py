@@ -14,8 +14,8 @@ from typing import Any, Optional
 
 
 def _now() -> str:
-    """ISO-8601 UTC timestamp."""
-    return datetime.now(timezone.utc).isoformat()
+    """UTC timestamp in SQLite-compatible format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ── Project ──────────────────────────────────────────────────────────

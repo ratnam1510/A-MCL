@@ -100,7 +100,7 @@ def test_database_schema_idempotent():
 # ─────────────────────────────────────────────────────────────
 # 2. PROJECT DETECTION TESTS
 # ─────────────────────────────────────────────────────────────
-EXPECTED_VERSION = "1.2.1"
+EXPECTED_VERSION = "1.2.4"
 
 def test_detect_project_with_explicit_path():
     """Project detection works when given an explicit directory."""
@@ -536,8 +536,8 @@ def test_cli_version():
     from amcl.cli import main
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
-    assert "1.2.1" in result.output
-    print("✅ Test 25: CLI version is correct (1.2.1)")
+    assert "1.2.4" in result.output
+    print("✅ Test 25: CLI version is correct (1.2.4)")
 
 
 def test_cli_status():
@@ -636,7 +636,7 @@ def main():
     errors = []
 
     print("=" * 60)
-    print("  A/MCL v1.2.0 — Comprehensive Test Suite")
+    print("  A/MCL v1.2.4 — Comprehensive Test Suite")
     print("  27 tests across 8 categories")
     print("=" * 60)
     print()

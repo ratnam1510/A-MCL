@@ -119,14 +119,14 @@ def status():
 
         click.echo("   Status:    ✅ Ready")
     else:
-        click.echo("   Status:    ❌ Not initialized (run `amcl-server setup`)")
+        click.echo("   Status:    ❌ Not initialized (run `amcl setup`)")
 
 
 @main.command()
 def stats():
     """Show agent usage statistics and leaderboard."""
     if not DB_PATH.exists():
-        click.echo("❌ Not initialized (run `amcl-server setup`)")
+        click.echo("❌ Not initialized (run `amcl setup`)")
         return
 
     from amcl.storage.database import get_connection
@@ -268,7 +268,7 @@ def _upload_html(filepath):
     import json
 
     boundary = "----AMCLShareBoundary"
-    filename = Path(filepath).name
+    filename = Path(filepath).name.encode("ascii", "replace").decode("ascii")
 
     with open(filepath, "rb") as f:
         file_data = f.read()
@@ -286,7 +286,7 @@ def _upload_html(filepath):
         data=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "A-MCL/1.2.0",
+            "User-Agent": "A-MCL/1.2.4",
         },
         method="POST",
     )
@@ -295,7 +295,7 @@ def _upload_html(filepath):
         resp = urllib.request.urlopen(req, timeout=30)
         res_data = json.loads(resp.read().decode())
         return res_data.get("url")
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -313,14 +313,14 @@ def _upload_json(projects, preferences):
         "projects": projects,
         "preferences": preferences,
         "exported_at": datetime.now().strftime("%b %d, %Y"),
-    }).encode("utf-8")
+    }, default=str).encode("utf-8")
 
     req = urllib.request.Request(
         "https://amcl.jpdz.app/api/share",
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "A-MCL/1.2.0",
+            "User-Agent": "A-MCL/1.2.4",
         },
         method="POST",
     )
@@ -647,7 +647,7 @@ def check():
         click.echo("   ℹ️  No supported AI agents detected on this system.")
 
     click.echo("")
-    click.echo("Run `amcl-server setup` to automatically fix any missing configurations.")
+    click.echo("Run `amcl setup` to automatically fix any missing configurations.")
 
 
 @main.command()

@@ -83,7 +83,7 @@ def detect_project(cwd: str | None = None) -> dict:
         info["language"] = "go"
     elif (root / "pom.xml").exists() or (root / "build.gradle").exists():
         info["language"] = "java"
-    elif (root / "*.swift").exists() or (root / "Package.swift").exists():
+    elif (root / "Package.swift").exists() or any(root.glob("*.swift")):
         info["language"] = "swift"
 
     return info

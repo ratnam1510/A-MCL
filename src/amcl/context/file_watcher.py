@@ -21,7 +21,7 @@ logger = logging.getLogger("amcl.file_watcher")
 _IGNORE_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", ".nuxt", ".cache", ".tox",
-    "egg-info", ".mypy_cache", ".ruff_cache",
+    ".mypy_cache", ".ruff_cache",
 }
 
 # Extensions never worth tracking
@@ -41,7 +41,7 @@ class _ChangeHandler(FileSystemEventHandler):
 
     def _should_ignore(self, path: str) -> bool:
         parts = Path(path).parts
-        if any(p in _IGNORE_DIRS for p in parts):
+        if any(p in _IGNORE_DIRS or p.endswith(".egg-info") for p in parts):
             return True
         if Path(path).suffix in _IGNORE_EXTS:
             return True

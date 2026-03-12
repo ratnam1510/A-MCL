@@ -180,7 +180,7 @@ def scan_claude_code() -> list[dict]:
                         "role": "user",
                         "content": display,
                         "agent": "claude-code",
-                        "timestamp": datetime.fromtimestamp(ts / 1000).isoformat() if ts else "",
+                        "timestamp": datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S") if ts else "",
                     })
                 except (json.JSONDecodeError, KeyError, ValueError):
                     continue
@@ -240,7 +240,7 @@ def import_into_db(conn, scan_results: dict[str, list[dict]]) -> dict:
                 content = msg["content"]
                 role = msg["role"]
                 agent = msg.get("agent", agent_name.lower())
-                ts = msg.get("timestamp", datetime.now().isoformat())
+                ts = msg.get("timestamp") or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
                 # Check if a nearly identical message already exists
                 existing = conn.execute(

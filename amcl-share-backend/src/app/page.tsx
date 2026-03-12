@@ -445,7 +445,7 @@ export default function Home() {
             letterSpacing: "0.06em",
           }}
         >
-          amcl-server v1.1.0 · jpdz.app
+          amcl-server · jpdz.app
         </span>
       </footer>
     </main>

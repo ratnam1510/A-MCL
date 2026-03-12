@@ -134,8 +134,12 @@ class ContextManager:
 
             uri = str(roots_result.roots[0].uri)
             if uri.startswith("file://"):
-                import urllib.request
-                decoded = urllib.request.url2pathname(uri[len("file://"):])
+                parsed = urllib.parse.urlparse(uri)
+                decoded = urllib.parse.unquote(parsed.path)
+                # On Windows, file:///C:/path produces path="/C:/path"
+                import sys
+                if sys.platform == "win32" and decoded.startswith("/") and len(decoded) > 2 and decoded[2] == ":":
+                    decoded = decoded[1:]
                 logger.info("Resolved workspace root from MCP client: %s", decoded)
                 return decoded
 
@@ -151,8 +155,10 @@ class ContextManager:
         try:
             if self._watcher:
                 self._watcher.stop()
+                self._watcher = None
             if self._project_id is not None:
                 self._storage.end_agent_session(self._project_id)
+                self._project_id = None
             self._storage.close()
         except Exception as e:
             logger.warning("Error during shutdown: %s", e)

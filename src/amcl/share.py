@@ -22,7 +22,7 @@ def _escape(text: str) -> str:
         escaped, flags=re.DOTALL,
     )
     escaped = re.sub(r'`([^`]+)`', r'<code class="ilc">\1</code>', escaped)
-    escaped = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', escaped)
+    escaped = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', escaped, flags=re.DOTALL)
     escaped = re.sub(
         r'^(#{1,4})\s+(.+)$',
         lambda m: f'<span class="mdh mdh{len(m.group(1))}">{m.group(2)}</span>',

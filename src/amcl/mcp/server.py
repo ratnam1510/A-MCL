@@ -73,18 +73,23 @@ def _detect_agent_from_process() -> str:
                 return "opencode"
             if "windsurf" in cmd or "windsurf" in name:
                 return "windsurf"
+            if "copilot" in cmd or "copilot" in name:
+                return "copilot"
             if "cline" in cmd or "roo-cline" in cmd:
                 return "roo-cline"
             if "antigravity" in cmd or "antigravity" in name or ".gemini" in cmd:
                 return "antigravity"
             
             # Special VSCode check (only if not one of the specific forks above)
-            if "code" in cmd or "code" in name:
+            if ("code" in cmd or "code" in name) and "opencode" not in cmd:
                 if "rooveterinaryinc" in cmd:
                     return "roo-cline"
                 return "vscode"
-                
-            current = current.parent()
+
+            try:
+                current = current.parent()
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                break
     except Exception:
         pass
     
