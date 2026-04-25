@@ -10,11 +10,34 @@ or fall back gracefully with a no-Context init.
 
 from __future__ import annotations
 
-import json
-
 from mcp.server.fastmcp import FastMCP
 
 from amcl.context.context_manager import ContextManager
+
+
+def _append_recent_signals(lines: list[str], compact: dict) -> None:
+    """Append extracted high-signal facts to a prompt body."""
+    files = compact.get("files_mentioned", [])
+    commands = compact.get("commands_mentioned", [])
+    blockers = compact.get("blockers", [])
+    symbols = compact.get("symbols_mentioned", [])
+
+    if not files and not commands and not blockers and not symbols:
+        return
+
+    lines.append("")
+    lines.append("## Recent Signals")
+
+    if files:
+        lines.append(f"Files mentioned: {', '.join(files)}")
+    if commands:
+        lines.append(f"Commands mentioned: {', '.join(commands)}")
+    if symbols:
+        lines.append(f"Symbols mentioned: {', '.join(symbols)}")
+    if blockers:
+        lines.append("Potential blockers:")
+        for blocker in blockers:
+            lines.append(f"  - {blocker}")
 
 
 def register_prompts(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
@@ -43,13 +66,14 @@ def register_prompts(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
             f"**Path:** {project.get('path', '')}",
             f"**Language:** {project.get('language', '')}",
             f"**Framework:** {project.get('framework', '')}",
-            f"**Git:** {project.get('git', {}).get('branch', '')} @ {project.get('git', {}).get('commit', '')}",
             "",
             "## Conversation Summary",
             conversation.get("summary", "No conversation history."),
             "",
-            "## Current Tasks",
         ]
+
+        _append_recent_signals(lines, conversation.get("compact", {}))
+        lines.extend(["", "## Current Tasks"])
 
         tasks = state.get("tasks", [])
         if tasks:
@@ -94,9 +118,10 @@ def register_prompts(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
             "",
             "## Conversation",
             conversation.get("summary", "No recent conversation."),
-            "",
-            "## Files Changed",
         ]
+
+        _append_recent_signals(lines, conversation.get("compact", {}))
+        lines.extend(["", "## Files Changed"])
 
         recent = files.get("recent_changes", [])
         if recent:
@@ -147,6 +172,7 @@ def register_prompts(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         lines.append("## What Was Being Discussed")
         lines.append(conversation.get("summary", "No conversation summary available."))
         lines.append("")
+        _append_recent_signals(lines, conversation.get("compact", {}))
 
         # What's next?
         in_progress = [t for t in state.get("tasks", []) if t.get("status") == "in_progress"]

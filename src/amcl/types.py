@@ -21,18 +21,11 @@ def _now() -> str:
 # ── Project ──────────────────────────────────────────────────────────
 
 @dataclass
-class GitInfo:
-    branch: str = ""
-    commit: str = ""
-
-
-@dataclass
 class ProjectMeta:
     name: str = ""
     path: str = ""
     language: str = ""
     framework: str = ""
-    git: GitInfo = field(default_factory=GitInfo)
 
 
 # ── Conversation ─────────────────────────────────────────────────────
@@ -103,6 +96,7 @@ class ContextSnapshot:
     state: dict[str, Any] = field(default_factory=dict)
     reasoning: dict[str, Any] = field(default_factory=dict)
     agents: dict[str, Any] = field(default_factory=dict)
+    signals: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

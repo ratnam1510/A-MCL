@@ -13,6 +13,27 @@ import re
 from datetime import datetime
 
 
+def _preview_text(text: str, max_chars: int = 220) -> str:
+    """Normalize and trim text for compact share summaries."""
+    normalized = " ".join((text or "").split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 1].rstrip() + "…"
+
+
+def _summarize_messages(messages: list[dict]) -> dict[str, str | int]:
+    """Build a compact conversation summary for share pages."""
+    first_user = next((m for m in messages if m.get("role") == "user"), None)
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    last_assistant = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+    return {
+        "original_goal": _preview_text((first_user or {}).get("content", "")),
+        "latest_user_request": _preview_text((last_user or {}).get("content", "")),
+        "latest_assistant_outcome": _preview_text((last_assistant or {}).get("content", "")),
+        "message_count": len(messages),
+    }
+
+
 def _escape(text: str) -> str:
     """HTML-escape and render markdown constructs into styled HTML."""
     escaped = html.escape(text)
@@ -37,6 +58,7 @@ def _escape(text: str) -> str:
 
 PALETTE = {
     "antigravity": "#D4AA44",
+    "codex":       "#4BA3FF",
     "cursor":      "#4FBE9E",
     "opencode":    "#D87A50",
     "claude":      "#BE8858",
@@ -64,7 +86,18 @@ def _build_project_html(proj: dict, idx: int) -> str:
     n_dec = len(decisions)
     n_fil = len(file_changes)
     n_agt = len(agent_stats)
+    tokens_burned = proj.get("tokens_burned", 0)
     total_am = sum(s.get("count", 0) for s in agent_stats)
+    convo = _summarize_messages(messages)
+
+    if tokens_burned:
+        tokens_metric_html = (
+            '<div class="pm-div"></div>'
+            f'<div class="pm"><span class="pm-v">{tokens_burned:,}</span>'
+            '<span class="pm-l">Tokens \U0001F525</span></div>'
+        )
+    else:
+        tokens_metric_html = ""
 
     # ── Agent bars ──
     mx = max((s["count"] for s in agent_stats), default=1)
@@ -118,6 +151,44 @@ def _build_project_html(proj: dict, idx: int) -> str:
             <div class="msg-txt">{cont}</div>
           </div>
         </div>'''
+
+    summary_items = ""
+    if convo["original_goal"]:
+        summary_items += f'''
+        <div class="sum-item">
+          <span class="sum-lab">Original Goal</span>
+          <p class="sum-val">{html.escape(str(convo["original_goal"]))}</p>
+        </div>'''
+    if convo["latest_user_request"]:
+        summary_items += f'''
+        <div class="sum-item">
+          <span class="sum-lab">Latest User Request</span>
+          <p class="sum-val">{html.escape(str(convo["latest_user_request"]))}</p>
+        </div>'''
+    if convo["latest_assistant_outcome"]:
+        summary_items += f'''
+        <div class="sum-item">
+          <span class="sum-lab">Latest Assistant Outcome</span>
+          <p class="sum-val">{html.escape(str(convo["latest_assistant_outcome"]))}</p>
+        </div>'''
+
+    convo_summary_html = (
+        f'<div class="sum-grid">{summary_items}</div>'
+        if summary_items else ""
+    )
+    thread_open = " open" if n_msg <= 6 else ""
+    thread_html = (
+        f'''
+        {convo_summary_html}
+        <details class="thread-wrap"{thread_open}>
+          <summary class="thread-toggle">
+            <span class="thread-toggle-label">Raw Timeline</span>
+            <span class="thread-toggle-meta">{n_msg} messages</span>
+          </summary>
+          <div class="thread">{msgs}</div>
+        </details>'''
+        if msgs else ""
+    )
 
     # ── Decisions ──
     decs = ""
@@ -211,8 +282,8 @@ def _build_project_html(proj: dict, idx: int) -> str:
 
     sec_chat = _sec(
         "\U0001F4AC", "Conversation",
-        f"{n_msg} messages \u2014 complete timeline",
-        f'<div class="thread">{msgs}</div>',
+        f"{n_msg} messages \u2014 summary first, raw timeline on demand",
+        thread_html,
     ) if msgs else ""
 
     sec_decs = _sec(
@@ -242,6 +313,7 @@ def _build_project_html(proj: dict, idx: int) -> str:
           <div class="pm"><span class="pm-v">{n_fil}</span><span class="pm-l">Files</span></div>
           <div class="pm-div"></div>
           <div class="pm"><span class="pm-v">{n_agt}</span><span class="pm-l">Agents</span></div>
+          {tokens_metric_html}
         </div>
       </div>
       {sec_stats}
@@ -262,6 +334,21 @@ def generate_share_html(
     grand_msgs = sum(len(p["messages"]) for p in projects)
     grand_decs = sum(len(p["decisions"]) for p in projects)
     grand_files = sum(len(p["file_changes"]) for p in projects)
+    grand_tokens = sum(p.get("tokens_burned", 0) for p in projects)
+
+    if grand_tokens:
+        token_burned_html = (
+            '<div style="display:flex;align-items:center;gap:20px;padding:18px 24px;'
+            'border-left:2px solid #C4654A;animation:fadeUp 0.7s cubic-bezier(0.4,0,0.2,1) 0.26s both">'
+            '<div style="flex:1">'
+            '<p style="font-size:9px;text-transform:uppercase;letter-spacing:0.24em;'
+            'color:#3A3530;font-weight:500;margin-bottom:8px">Tokens Burned \U0001F525</p>'
+            '<code style="font-size:15px;color:#E8E0D0;letter-spacing:-0.01em">'
+            f'<span style="color:#C4654A">{grand_tokens:,}</span> tokens</code>'
+            '</div></div>'
+        )
+    else:
+        token_burned_html = ""
 
     project_panels = ""
     for i, proj in enumerate(projects):
@@ -390,6 +477,17 @@ body::before{
 .bar-fill{position:absolute;top:0;left:0;bottom:0;border-radius:1px;width:0;animation:barIn 1.5s cubic-bezier(0.34,1.56,0.64,1) forwards;animation-delay:calc(var(--d,0s) + .3s)}
 
 .thread{display:flex;flex-direction:column;gap:3px;width:100%;min-width:0}
+.sum-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.sum-item{background:#161210;border:1px solid rgba(232,224,208,0.07);border-radius:10px;padding:14px 16px}
+.sum-lab{display:block;font-size:9px;color:#6D655A;text-transform:uppercase;letter-spacing:0.18em;font-weight:600;margin-bottom:8px}
+.sum-val{font-size:12px;color:#A69E90;line-height:1.7}
+.thread-wrap{background:#120F0D;border:1px solid rgba(232,224,208,0.07);border-radius:10px;overflow:hidden}
+.thread-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;list-style:none;user-select:none}
+.thread-toggle::-webkit-details-marker{display:none}
+.thread-toggle-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.16em;color:#E8E0D0}
+.thread-toggle-meta{font-size:10px;color:#6D655A}
+.thread-wrap .thread{padding:0 10px 10px}
+.thread-wrap:not([open]) .thread{display:none}
 .msg{display:flex;gap:12px;min-width:0}
 .msg-rail{display:flex;flex-direction:column;align-items:center;width:28px;flex-shrink:0;padding-top:4px}
 .msg-av{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:#fff;flex-shrink:0}
@@ -454,6 +552,7 @@ body::before{
   .hero-grid{grid-template-columns:1fr!important;gap:32px!important}
   .proj-metrics{flex-wrap:wrap}.pm-div{display:none}
   .proj-sel{gap:5px}
+  .sum-grid{grid-template-columns:1fr}
   .msg-card{padding:12px 14px}
 }
 @media(max-width:480px){
@@ -515,9 +614,11 @@ body::before{
             <code style="font-size:15px;color:#E8E0D0;letter-spacing:-0.01em"><span style="color:#6D655A">{grand_decs}</span> decisions \u00b7 <span style="color:#6D655A">{grand_files}</span> files</code>
           </div>
         </div>
+        {token_burned_html}
       </div>
     </div>
   </section>
+
 
   <!-- Content sections -->
   <section style="padding:clamp(48px, 6vh, 80px) clamp(32px, 5vw, 80px);position:relative;z-index:1">

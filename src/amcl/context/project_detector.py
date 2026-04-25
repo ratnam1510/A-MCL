@@ -1,21 +1,12 @@
 """
-ProjectDetector — identifies the current project by git root,
-working directory, and config files.
+ProjectDetector — identifies the current project by
+working directory and config files.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
-
-try:
-    from git import InvalidGitRepositoryError, Repo
-except ImportError:
-    Repo = None  # type: ignore[assignment, misc]
-    InvalidGitRepositoryError = Exception  # type: ignore[assignment, misc]
-
-logger = logging.getLogger("amcl.project_detector")
 
 
 def detect_project(cwd: str | None = None) -> dict:
@@ -26,7 +17,7 @@ def detect_project(cwd: str | None = None) -> dict:
         cwd: Explicit project directory. If None, falls back to os.getcwd()
              and process-tree heuristics.
 
-    Returns dict: { name, path, language, framework, git_branch, git_commit }
+    Returns dict: { name, path, language, framework }
     """
     project_path = cwd
 
@@ -50,23 +41,7 @@ def detect_project(cwd: str | None = None) -> dict:
         "path": str(Path(project_path).resolve()),
         "language": "",
         "framework": "",
-        "git_branch": "",
-        "git_commit": "",
     }
-
-    # ── Git detection ────────────────────────────────────────────
-    if Repo is not None:
-        try:
-            repo = Repo(project_path, search_parent_directories=True)
-            info["path"] = repo.working_dir  # git root
-            info["name"] = Path(repo.working_dir).name
-            if not repo.head.is_detached:
-                info["git_branch"] = str(repo.active_branch)
-            info["git_commit"] = repo.head.commit.hexsha[:7]
-        except (InvalidGitRepositoryError, ValueError):
-            pass
-        except Exception as e:
-            logger.debug("Git detection failed: %s", e)
 
     # ── Language / framework heuristics ──────────────────────────
     root = Path(info["path"])

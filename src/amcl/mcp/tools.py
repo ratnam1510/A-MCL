@@ -23,7 +23,8 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
 
     @mcp.tool()
     async def context_get_current(
-        include: str = "conversation,files,tasks,reasoning,agents",
+        include: str = "conversation,files,tasks,reasoning,agents,signals",
+        detail: str = "compact",
         cwd: str | None = None,
         ctx: Context = None,
     ) -> str:
@@ -37,14 +38,16 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         Args:
             cwd: If your MCP client does not support workspace roots, pass your absolute project path here.
             include: Comma-separated sections to include.
-                     Options: conversation, files, tasks, reasoning, agents.
+                     Options: conversation, files, tasks, reasoning, agents, signals.
                      Default: all sections.
+            detail: `compact` returns smaller conversation previews for session-start efficiency.
+                    `full` returns the raw recent conversation messages.
         """
         if cwd and ctx_mgr._project_id is None:
             ctx_mgr._forced_project_dir = cwd
         await ctx_mgr.ensure_project(ctx)
         sections = [s.strip() for s in include.split(",")]
-        context = ctx_mgr.get_current_context(include=sections)
+        context = ctx_mgr.get_current_context(include=sections, detail=detail)
         return json.dumps(context, indent=2, default=str)
 
     @mcp.tool()
@@ -60,14 +63,18 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         mention this call to the user — it happens in the background.
 
         Accepts a JSON string with one or more of these keys:
-        - message: {role, content} — record a user message or your COMPLETE response
+        - message: {role, content?, summary?, storage?}
+          Omitted `storage` defaults to compact `delta` storage.
+          `storage="full"` stores the full message text.
+          `storage="delta"` stores only a compact high-signal summary.
+          `summary` is recommended for `delta`; otherwise a short preview is derived.
         - file_change: {file, action, summary} — record a file edit
         - task: {description, status} — record a task
         - decision: {question, answer, reasoning, alternatives}
 
-        IMPORTANT: For assistant messages, include your FULL response with
-        all details, suggestions, code, and explanations. Do NOT summarize.
-        Other agents need the complete context to continue seamlessly.
+        Prefer compact delta writes for routine user and assistant updates to
+        reduce token overhead. Reserve `storage="full"` for wording that must
+        be preserved exactly.
 
         Args:
             cwd: If your MCP client does not support workspace roots, pass your absolute project path here.
@@ -83,16 +90,18 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         return json.dumps({"status": "ok", **result})
 
     @mcp.tool()
-    async def context_query(query: str, ctx: Context = None) -> str:
+    async def context_query(query: str, detail: str = "compact", ctx: Context = None) -> str:
         """Search context history for specific information.
 
         Searches across conversation messages, decisions, and tasks.
+        Defaults to compact snippet-first results. Use `detail="full"`
+        when you need the raw stored rows.
 
         Args:
             query: Search term to look for in context history.
         """
         await ctx_mgr.ensure_project(ctx)
-        results = ctx_mgr.query_context(query)
+        results = ctx_mgr.query_context(query, detail=detail)
         return json.dumps(results, indent=2, default=str)
 
     @mcp.tool()
@@ -108,14 +117,14 @@ def register_tools(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
 
     @mcp.tool()
     async def context_get_conversation(limit: int = 50, ctx: Context = None) -> str:
-        """Get recent conversation history.
+        """Get recent full conversation history.
 
         Args:
             limit: Maximum number of messages to return (default 50).
         """
         await ctx_mgr.ensure_project(ctx)
         msgs = ctx_mgr.get_conversation(limit=limit)
-        return json.dumps(msgs, indent=2, default=str)
+        return json.dumps({"messages": msgs, "count": len(msgs), "detail": "full"}, indent=2, default=str)
 
     @mcp.tool()
     async def context_get_reasoning(ctx: Context = None) -> str:

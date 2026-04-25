@@ -11,7 +11,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 AMCL_DATA_DIR = Path(os.environ.get("AMCL_DATA_DIR", os.path.expanduser("~/.amcl")))
 DB_PATH = AMCL_DATA_DIR / "amcl.db"
@@ -204,6 +204,39 @@ CREATE TRIGGER IF NOT EXISTS decisions_au AFTER UPDATE ON decisions BEGIN
 END;
 """
 
+_SCHEMA_SQL_V3 = """
+-- Ingestion checkpoints (V3)
+CREATE TABLE IF NOT EXISTS ingestion_checkpoints (
+    source TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    inode INTEGER NOT NULL DEFAULT 0,
+    offset INTEGER NOT NULL DEFAULT 0,
+    session_id TEXT DEFAULT '',
+    project_path TEXT DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (source, source_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_checkpoints_source
+ON ingestion_checkpoints(source);
+"""
+
+
+
+_SCHEMA_SQL_V4 = """
+-- Token usage tracking (V4)
+CREATE TABLE IF NOT EXISTS token_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    operation TEXT NOT NULL,  -- 'write' or 'read'
+    tokens INTEGER NOT NULL DEFAULT 0,
+    agent TEXT DEFAULT '',
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_project ON token_usage(project_id);
+"""
 
 
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
@@ -215,7 +248,7 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # High timeout (30s) so concurrent agents wait instead of crashing
-    conn = sqlite3.connect(str(path), timeout=30.0)
+    conn = sqlite3.connect(str(path), timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -231,6 +264,8 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
         if current_version == 0:
             conn.executescript(_SCHEMA_SQL)
             conn.executescript(_SCHEMA_SQL_V2)
+            conn.executescript(_SCHEMA_SQL_V3)
+            conn.executescript(_SCHEMA_SQL_V4)
             conn.execute(
                 "INSERT INTO schema_version (version) VALUES (?)",
                 (SCHEMA_VERSION,),
@@ -245,6 +280,18 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (2,),
+                )
+            if current_version < 3:
+                conn.executescript(_SCHEMA_SQL_V3)
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)",
+                    (3,),
+                )
+            if current_version < 4:
+                conn.executescript(_SCHEMA_SQL_V4)
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)",
+                    (4,),
                 )
         conn.commit()
 

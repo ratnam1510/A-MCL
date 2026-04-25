@@ -1,7 +1,7 @@
 """
 MCP Resources — read-only data endpoints agents can access.
 
-Implements 6 resources from the PRD using context:// URI scheme.
+Implements 7 resources from the PRD using context:// URI scheme.
 
 Note: FastMCP resource handlers do NOT receive a Context object.
 Resources rely on ensure_project() having been called by a tool first,
@@ -33,7 +33,7 @@ def register_resources(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         """Full conversation history for the current project."""
         await ctx_mgr.ensure_project()
         msgs = ctx_mgr.get_conversation(limit=200)
-        return json.dumps({"messages": msgs, "count": len(msgs)}, indent=2, default=str)
+        return json.dumps({"messages": msgs, "count": len(msgs), "detail": "full"}, indent=2, default=str)
 
     @mcp.resource("context://files")
     async def files() -> str:
@@ -68,3 +68,10 @@ def register_resources(mcp: FastMCP, ctx_mgr: ContextManager) -> None:
         await ctx_mgr.ensure_project()
         sessions = ctx_mgr.get_agent_history()
         return json.dumps({"history": sessions}, indent=2, default=str)
+
+    @mcp.resource("context://signals")
+    async def signals() -> str:
+        """Recent deterministic signals extracted from messages."""
+        await ctx_mgr.ensure_project()
+        recent = ctx_mgr.get_recent_signals()
+        return json.dumps(recent, indent=2, default=str)

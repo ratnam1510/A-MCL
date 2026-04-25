@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 
 from amcl.storage.storage_manager import StorageManager
 
@@ -29,6 +31,13 @@ _IGNORE_EXTS = {
     ".pyc", ".pyo", ".o", ".so", ".dylib", ".class",
     ".db", ".sqlite", ".sqlite3", ".lock",
 }
+
+
+def _make_observer() -> Observer:
+    """Use polling on macOS to avoid native FSEvents shutdown crashes."""
+    if sys.platform == "darwin":
+        return PollingObserver()
+    return Observer()
 
 
 class _ChangeHandler(FileSystemEventHandler):
@@ -110,7 +119,7 @@ class FileWatcher:
             logger.warning("Project root is / or ~, skipping file watcher: %s", self._root)
             return
         handler = _ChangeHandler(self._storage, self._project_id, self._root)
-        self._observer = Observer()
+        self._observer = _make_observer()
         self._observer.schedule(handler, self._root, recursive=True)
         self._observer.daemon = True
         self._observer.start()

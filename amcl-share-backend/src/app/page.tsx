@@ -393,7 +393,7 @@ export default function Home() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(5, 1fr)",
             gap: "0",
             borderTop: "1px solid rgba(232,224,208,0.04)",
             borderBottom: "1px solid rgba(232,224,208,0.04)",
@@ -405,6 +405,7 @@ export default function Home() {
             { num: "02", title: "Shareable", desc: "One URL for any conversation. Drop it in Slack, open it anywhere.", delay: "0.36s" },
             { num: "03", title: "Persistent", desc: "Context survives every agent switch. Zero information loss.", delay: "0.39s" },
             { num: "04", title: "Retroactive", desc: "Import history from agents you used before installing.", delay: "0.42s" },
+            { num: "05", title: "Tokens Burned 🔥", desc: "Track how many tokens you've burned across every project. Brag about your spend.", delay: "0.45s" },
           ].map(({ num, title, desc, delay }) => (
             <FeatureCol key={num} num={num} title={title} desc={desc} delay={delay} />
           ))}

@@ -2,7 +2,7 @@
 
 **Zero-intervention context persistence across AI coding agents.**
 
-When you hit a rate limit on one agent (Antigravity, Cursor, Claude Code) and switch to another, A/MCL ensures the new agent *automatically* has access to the complete conversation history, file changes, reasoning chains, and project state. No commands. No manual handoff. It just works.
+When you hit a rate limit on one agent (Codex, Antigravity, Cursor, Claude Code) and switch to another, A/MCL ensures the new agent *automatically* has access to the complete conversation history, file changes, reasoning chains, and project state. No commands. No manual handoff. It just works.
 
 ---
 
@@ -13,7 +13,7 @@ A/MCL is an **MCP (Model Context Protocol) server**. MCP-compatible agents disco
 ```
 ┌──────────────┐     stdio      ┌────────────────┐     SQLite     ┌──────────┐
 │  AI Agent    │ ◄────────────► │  A/MCL Server  │ ◄────────────► │  Context │
-│ (Antigravity,│                │  (FastMCP)     │                │  Store   │
+│ (Codex,      │                │  (FastMCP)     │                │  Store   │
 │  Cursor, etc)│                │                │                │ (~/.amcl)│
 └──────────────┘                └────────────────┘                └──────────┘
 ```
@@ -50,6 +50,7 @@ amcl-server check
 ```
 
 The `setup` command automatically detects all installed AI agents and IDE extensions on your system and registers A/MCL directly into their settings. Once you run setup, you are completely done.
+It also installs or updates Codex's global `~/.codex/AGENTS.md` so Codex inherits the same A/MCL behavior rules without touching repository-local `AGENTS.md` files.
 
 ---
 
@@ -57,6 +58,7 @@ The `setup` command automatically detects all installed AI agents and IDE extens
 
 A/MCL automatically integrates with:
 - **Cursor** (`~/.cursor/mcp.json`)
+- **Codex** (`~/.codex/config.toml`)
 - **Claude Desktop / Antigravity** (`Library/Application Support/Claude/claude_desktop_config.json`)
 - **Amp** (`~/.amp/mcp.json`)
 - **Roo / Cline** (VSCode & Cursor instances)

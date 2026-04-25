@@ -10,7 +10,9 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from amcl.agent_identity import normalize_agent_name
 from amcl.storage.database import get_connection
+from amcl.context.message_filters import parse_message_context_note
 from amcl.types import (
     AgentSession,
     ConversationMessage,
@@ -29,6 +31,9 @@ class StorageManager:
 
     def close(self) -> None:
         self._conn.close()
+
+    def _normalize_agent(self, agent: str | None, fallback: str = "unknown") -> str:
+        return normalize_agent_name(agent, fallback=fallback)
 
     # ── Projects ─────────────────────────────────────────────────────
 
@@ -60,7 +65,14 @@ class StorageManager:
         cur = self._conn.execute(
             """INSERT INTO projects (name, path, language, framework, git_branch, git_commit)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (name or Path(path).name, path, language, framework, git_branch, git_commit),
+            (
+                name or Path(path).name,
+                path,
+                language,
+                framework,
+                git_branch,
+                git_commit,
+            ),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -81,32 +93,45 @@ class StorageManager:
         agent: str = "",
         context_note: str = "",
         msg_id: str | None = None,
+        ignore_existing: bool = False,
     ) -> str:
         mid = msg_id or f"msg-{uuid.uuid4().hex[:8]}"
-        self._conn.execute(
-            """INSERT INTO messages (id, project_id, role, content, agent, context_note)
+        insert = "INSERT OR IGNORE" if ignore_existing else "INSERT"
+        normalized_agent = self._normalize_agent(agent, fallback="unknown")
+        cur = self._conn.execute(
+            f"""{insert} INTO messages (id, project_id, role, content, agent, context_note)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (mid, project_id, role, content, agent, context_note),
+            (mid, project_id, role, content, normalized_agent, context_note),
         )
         self._conn.commit()
+        if ignore_existing and cur.rowcount == 0:
+            return ""
         return mid
 
     def get_messages(
-        self, project_id: int, limit: int = 50, since: str | None = None
+        self,
+        project_id: int,
+        limit: int = 50,
+        since: str | None = None,
+        include_noise: bool = False,
     ) -> list[ConversationMessage]:
+        noise_filter = ""
+        if not include_noise:
+            noise_filter = " AND (context_note = '' OR context_note NOT LIKE 'noise:%')"
+
         if since:
             rows = self._conn.execute(
-                """SELECT * FROM messages
-                   WHERE project_id = ? AND timestamp >= ?
-                   ORDER BY timestamp DESC
+                f"""SELECT * FROM messages
+                   WHERE project_id = ? AND timestamp >= ?{noise_filter}
+                   ORDER BY timestamp DESC, rowid DESC
                    LIMIT ?""",
                 (project_id, since, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                """SELECT * FROM messages
-                   WHERE project_id = ?
-                   ORDER BY timestamp DESC
+                f"""SELECT * FROM messages
+                   WHERE project_id = ?{noise_filter}
+                   ORDER BY timestamp DESC, rowid DESC
                    LIMIT ?""",
                 (project_id, limit),
             ).fetchall()
@@ -122,6 +147,60 @@ class StorageManager:
             for r in reversed(rows)  # oldest first
         ]
 
+    def get_last_message(
+        self,
+        project_id: int,
+        include_noise: bool = False,
+    ) -> ConversationMessage | None:
+        """Return the latest stored message, or None if no messages exist."""
+        noise_filter = ""
+        if not include_noise:
+            noise_filter = " AND (context_note = '' OR context_note NOT LIKE 'noise:%')"
+
+        row = self._conn.execute(
+            f"""SELECT * FROM messages
+               WHERE project_id = ?{noise_filter}
+               ORDER BY timestamp DESC, rowid DESC
+               LIMIT 1""",
+            (project_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        return ConversationMessage(
+            id=row["id"],
+            timestamp=row["timestamp"],
+            role=row["role"],
+            content=row["content"],
+            agent=row["agent"],
+            context_note=row["context_note"],
+        )
+
+    def count_messages(
+        self,
+        project_id: int,
+        since: str | None = None,
+        include_noise: bool = False,
+    ) -> int:
+        """Return the number of stored conversation messages."""
+        noise_filter = ""
+        if not include_noise:
+            noise_filter = " AND (context_note = '' OR context_note NOT LIKE 'noise:%')"
+
+        if since:
+            row = self._conn.execute(
+                f"""SELECT COUNT(*) AS c FROM messages
+                   WHERE project_id = ? AND timestamp >= ?{noise_filter}""",
+                (project_id, since),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                f"""SELECT COUNT(*) AS c FROM messages
+                   WHERE project_id = ?{noise_filter}""",
+                (project_id,),
+            ).fetchone()
+        return int(row["c"]) if row else 0
+
     # ── File Changes ─────────────────────────────────────────────────
 
     def add_file_change(
@@ -133,10 +212,11 @@ class StorageManager:
         summary: str = "",
         diff: str = "",
     ) -> int:
+        normalized_agent = self._normalize_agent(agent, fallback="unknown")
         cur = self._conn.execute(
             """INSERT INTO file_changes (project_id, file_path, action, agent, summary, diff)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (project_id, file_path, action, agent, summary, diff),
+            (project_id, file_path, action, normalized_agent, summary, diff),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -229,6 +309,7 @@ class StorageManager:
         alternatives: list[str] | None = None,
         agent: str = "",
     ) -> int:
+        normalized_agent = self._normalize_agent(agent, fallback="unknown")
         cur = self._conn.execute(
             """INSERT INTO decisions
                (project_id, question, answer, reasoning, alternatives, agent)
@@ -239,13 +320,15 @@ class StorageManager:
                 answer,
                 reasoning,
                 json.dumps(alternatives or []),
-                agent,
+                normalized_agent,
             ),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
-    def get_decisions(self, project_id: int, since: str | None = None) -> list[Decision]:
+    def get_decisions(
+        self, project_id: int, since: str | None = None
+    ) -> list[Decision]:
         if since:
             rows = self._conn.execute(
                 "SELECT * FROM decisions WHERE project_id = ? AND timestamp >= ? ORDER BY timestamp",
@@ -271,6 +354,7 @@ class StorageManager:
     # ── Global Preferences ───────────────────────────────────────────
 
     def set_global_preference(self, category: str, preference: str, agent: str) -> None:
+        normalized_agent = self._normalize_agent(agent, fallback="unknown")
         self._conn.execute(
             """INSERT INTO global_preferences (category, preference, source_agent)
                VALUES (?, ?, ?)
@@ -278,7 +362,7 @@ class StorageManager:
                    preference=excluded.preference,
                    source_agent=excluded.source_agent,
                    updated_at=datetime('now')""",
-            (category, preference, agent),
+            (category, preference, normalized_agent),
         )
         self._conn.commit()
 
@@ -290,10 +374,9 @@ class StorageManager:
 
     # ── Agent Sessions ───────────────────────────────────────────────
 
-    def start_agent_session(
-        self, project_id: int, agent: str
-    ) -> int:
+    def start_agent_session(self, project_id: int, agent: str) -> int:
         """Close any open sessions and start a new one."""
+        normalized_agent = self._normalize_agent(agent, fallback="unknown")
         # Close previous open session
         self._conn.execute(
             """UPDATE agent_sessions
@@ -305,7 +388,7 @@ class StorageManager:
         cur = self._conn.execute(
             """INSERT INTO agent_sessions (project_id, agent)
                VALUES (?, ?)""",
-            (project_id, agent),
+            (project_id, normalized_agent),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -323,7 +406,9 @@ class StorageManager:
         )
         self._conn.commit()
 
-    def get_agent_sessions(self, project_id: int, since: str | None = None) -> list[AgentSession]:
+    def get_agent_sessions(
+        self, project_id: int, since: str | None = None
+    ) -> list[AgentSession]:
         if since:
             rows = self._conn.execute(
                 """SELECT * FROM agent_sessions
@@ -358,14 +443,132 @@ class StorageManager:
         ).fetchone()
         return row["started"] if row else None
 
+    # ── Ingestion Checkpoints ───────────────────────────────────────
+
+    def get_ingestion_checkpoint(
+        self, source: str, source_path: str
+    ) -> dict[str, int | str]:
+        row = self._conn.execute(
+            """SELECT source, source_path, inode, offset, session_id, project_path
+               FROM ingestion_checkpoints
+               WHERE source = ? AND source_path = ?""",
+            (source, source_path),
+        ).fetchone()
+        if not row:
+            return {
+                "source": source,
+                "source_path": source_path,
+                "inode": 0,
+                "offset": 0,
+                "session_id": "",
+                "project_path": "",
+            }
+        return {
+            "source": row["source"],
+            "source_path": row["source_path"],
+            "inode": int(row["inode"] or 0),
+            "offset": int(row["offset"] or 0),
+            "session_id": row["session_id"] or "",
+            "project_path": row["project_path"] or "",
+        }
+
+    def upsert_ingestion_checkpoint(
+        self,
+        *,
+        source: str,
+        source_path: str,
+        inode: int,
+        offset: int,
+        session_id: str = "",
+        project_path: str = "",
+    ) -> None:
+        self._conn.execute(
+            """INSERT INTO ingestion_checkpoints
+               (source, source_path, inode, offset, session_id, project_path)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source, source_path) DO UPDATE SET
+                   inode=excluded.inode,
+                   offset=excluded.offset,
+                   session_id=excluded.session_id,
+                   project_path=excluded.project_path,
+                   updated_at=datetime('now')""",
+            (source, source_path, inode, offset, session_id, project_path),
+        )
+        self._conn.commit()
+
+    # ── Token Usage ──────────────────────────────────────────────────
+
+    def record_token_usage(
+        self,
+        project_id: int,
+        operation: str,
+        tokens: int,
+        agent: str = "",
+    ) -> int:
+        """Record a token usage event."""
+        normalized_agent = self._normalize_agent(agent, fallback="unknown")
+        cur = self._conn.execute(
+            """INSERT INTO token_usage (project_id, operation, tokens, agent)
+               VALUES (?, ?, ?, ?)""",
+            (project_id, operation, tokens, normalized_agent),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_token_stats(self, project_id: int) -> dict:
+        """Return aggregate token usage stats for a project."""
+        row = self._conn.execute(
+            """SELECT
+                 COALESCE(SUM(tokens), 0) as total_tokens,
+                 COALESCE(SUM(CASE WHEN operation = 'write' THEN tokens ELSE 0 END), 0) as write_tokens,
+                 COALESCE(SUM(CASE WHEN operation = 'read' THEN tokens ELSE 0 END), 0) as read_tokens,
+                 COUNT(*) as total_operations
+               FROM token_usage WHERE project_id = ?""",
+            (project_id,),
+        ).fetchone()
+
+        per_agent = self._conn.execute(
+            """SELECT COALESCE(NULLIF(agent, ''), 'unknown') as agent,
+                      SUM(tokens) as tokens, COUNT(*) as operations
+               FROM token_usage WHERE project_id = ?
+               GROUP BY COALESCE(NULLIF(agent, ''), 'unknown')
+               ORDER BY tokens DESC""",
+            (project_id,),
+        ).fetchall()
+
+        return {
+            "total_tokens": int(row["total_tokens"]),
+            "write_tokens": int(row["write_tokens"]),
+            "read_tokens": int(row["read_tokens"]),
+            "total_operations": int(row["total_operations"]),
+            "per_agent": [
+                {"agent": r["agent"], "tokens": int(r["tokens"]), "operations": int(r["operations"])}
+                for r in per_agent
+            ],
+        }
+
     # ── Search ───────────────────────────────────────────────────────
 
-    def search_context(self, project_id: int, query: str, since: str | None = None) -> dict:
+    @staticmethod
+    def _preview_text(text: str, max_chars: int = 180) -> tuple[str, bool]:
+        """Return a compact text preview plus truncation metadata."""
+        normalized = " ".join((text or "").split())
+        if len(normalized) <= max_chars:
+            return normalized, False
+        return normalized[: max_chars - 1].rstrip() + "…", True
+
+    def search_context(
+        self,
+        project_id: int,
+        query: str,
+        since: str | None = None,
+        detail: str = "compact",
+    ) -> dict:
         """Full-text search across messages, decisions, and tasks using FTS5."""
         # Sanitize query for FTS5 syntax (wrap in quotes if not already valid)
         clean_query = query.replace('"', '""')
         fts_query = f'"{clean_query}"*'
-        
+
         # Fallback LIKE query for tasks which aren't FTS5 indexed yet
         q = f"%{query}%"
 
@@ -376,6 +579,7 @@ class StorageManager:
                FROM messages m
                JOIN messages_fts fts ON m.rowid = fts.rowid
                WHERE m.project_id = ? AND m.timestamp >= ? AND messages_fts MATCH ?
+                 AND (m.context_note = '' OR m.context_note NOT LIKE 'noise:%')
                ORDER BY m.timestamp LIMIT 20""",
             (project_id, since_str, fts_query),
         ).fetchall()
@@ -407,9 +611,82 @@ class StorageManager:
             (project_id, since_str, fts_query),
         ).fetchall()
 
+        if detail == "full":
+            full_messages = []
+            for row in messages:
+                meta = parse_message_context_note(row["context_note"])
+                item = dict(row)
+                item["storage"] = str(meta.get("storage", "full"))
+                item["raw_chars"] = meta.get("raw_chars")
+                item["summary_source"] = meta.get("summary_source")
+                item["signals"] = meta.get("signals", {})
+                item["source"] = meta.get("source")
+                full_messages.append(item)
+            return {
+                "detail": "full",
+                "messages": full_messages,
+                "decisions": [dict(r) for r in decisions],
+                "tasks": [dict(r) for r in tasks],
+                "file_changes": [dict(r) for r in file_changes],
+            }
+
+        compact_messages = []
+        for row in messages:
+            preview, truncated = self._preview_text(row["content"])
+            meta = parse_message_context_note(row["context_note"])
+            compact_messages.append(
+                {
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "role": row["role"],
+                    "agent": row["agent"],
+                    "content": preview,
+                    "truncated": truncated,
+                    "storage": str(meta.get("storage", "full")),
+                    "raw_chars": meta.get("raw_chars"),
+                    "summary_source": meta.get("summary_source"),
+                    "signals": meta.get("signals", {}),
+                    "source": meta.get("source"),
+                }
+            )
+
+        compact_decisions = []
+        for row in decisions:
+            answer_preview, answer_truncated = self._preview_text(row["answer"])
+            reasoning_preview, reasoning_truncated = self._preview_text(
+                row["reasoning"]
+            )
+            compact_decisions.append(
+                {
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "question": row["question"],
+                    "answer": answer_preview,
+                    "reasoning": reasoning_preview,
+                    "agent": row["agent"],
+                    "truncated": answer_truncated or reasoning_truncated,
+                }
+            )
+
+        compact_file_changes = []
+        for row in file_changes:
+            summary_preview, summary_truncated = self._preview_text(row["summary"])
+            compact_file_changes.append(
+                {
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "file_path": row["file_path"],
+                    "action": row["action"],
+                    "agent": row["agent"],
+                    "summary": summary_preview,
+                    "truncated": summary_truncated,
+                }
+            )
+
         return {
-            "messages": [dict(r) for r in messages],
-            "decisions": [dict(r) for r in decisions],
+            "detail": "compact",
+            "messages": compact_messages,
+            "decisions": compact_decisions,
             "tasks": [dict(r) for r in tasks],
-            "file_changes": [dict(r) for r in file_changes],
+            "file_changes": compact_file_changes,
         }
