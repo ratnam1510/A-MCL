@@ -11,7 +11,6 @@ so that the project workspace is lazily resolved from the MCP client's
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 

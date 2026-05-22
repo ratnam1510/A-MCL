@@ -2,6 +2,11 @@
 .cursor/
 amcl-video/
 
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
 # Python
 __pycache__/
 *.py[cod]
@@ -42,6 +47,21 @@ venv.bak/
 *.mp4
 *.mov
 
+# Share backend (optional; not required for the Python package)
+amcl-share-backend/node_modules/
+amcl-share-backend/.next/
+amcl-share-backend/.vercel/
+amcl-share-backend/.env.local
+
 # Obsolete Frontend Dirs
 amcl-share-backend/src/app/api/share/
 amcl-share-backend/src/app/share/
+
+# Local helper scripts and benchmark scratch files
+_*.sh
+_bench.py
+slate.json
+test-env/
+test_psutil_cwd.py
+patch_others.py
+patch_tools.py

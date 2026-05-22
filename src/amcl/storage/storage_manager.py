@@ -5,10 +5,8 @@ StorageManager — typed CRUD layer over the A/MCL SQLite database.
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from amcl.agent_identity import normalize_agent_name
 from amcl.storage.database import get_connection
@@ -19,7 +17,6 @@ from amcl.types import (
     Decision,
     FileChange,
     TaskItem,
-    _now,
 )
 
 
@@ -504,27 +501,52 @@ class StorageManager:
         operation: str,
         tokens: int,
         agent: str = "",
+        source_table: str = "",
+        source_id: int = 0,
     ) -> int:
         """Record a token usage event."""
         normalized_agent = self._normalize_agent(agent, fallback="unknown")
         cur = self._conn.execute(
-            """INSERT INTO token_usage (project_id, operation, tokens, agent)
-               VALUES (?, ?, ?, ?)""",
-            (project_id, operation, tokens, normalized_agent),
+            """INSERT INTO token_usage
+                 (project_id, operation, tokens, agent, source_table, source_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (project_id, operation, tokens, normalized_agent, source_table, source_id),
         )
         self._conn.commit()
         return cur.lastrowid
 
+    # Maps detailed operation types to the buckets surfaced in the UI.
+    _OPERATION_BUCKETS = {
+        "message_write": "messages",
+        "file_change_write": "file_changes",
+        "decision_write": "decisions",
+        "task_write": "tasks",
+        "preference_write": "preferences",
+        "read": "reads",
+    }
+
+    # Operations considered "writes" for the legacy write_tokens tally.
+    _WRITE_OPERATIONS = (
+        "write",
+        "message_write",
+        "file_change_write",
+        "decision_write",
+        "task_write",
+        "preference_write",
+    )
+
     def get_token_stats(self, project_id: int) -> dict:
-        """Return aggregate token usage stats for a project."""
+        """Return aggregate token usage stats for a project, including a
+        per-operation breakdown so the UI can show where tokens went."""
+        write_ops_placeholders = ",".join("?" for _ in self._WRITE_OPERATIONS)
         row = self._conn.execute(
-            """SELECT
+            f"""SELECT
                  COALESCE(SUM(tokens), 0) as total_tokens,
-                 COALESCE(SUM(CASE WHEN operation = 'write' THEN tokens ELSE 0 END), 0) as write_tokens,
+                 COALESCE(SUM(CASE WHEN operation IN ({write_ops_placeholders}) THEN tokens ELSE 0 END), 0) as write_tokens,
                  COALESCE(SUM(CASE WHEN operation = 'read' THEN tokens ELSE 0 END), 0) as read_tokens,
                  COUNT(*) as total_operations
                FROM token_usage WHERE project_id = ?""",
-            (project_id,),
+            (*self._WRITE_OPERATIONS, project_id),
         ).fetchone()
 
         per_agent = self._conn.execute(
@@ -536,6 +558,28 @@ class StorageManager:
             (project_id,),
         ).fetchall()
 
+        per_op = self._conn.execute(
+            """SELECT operation, COALESCE(SUM(tokens), 0) as tokens,
+                      COUNT(*) as operations
+               FROM token_usage WHERE project_id = ?
+               GROUP BY operation
+               ORDER BY tokens DESC""",
+            (project_id,),
+        ).fetchall()
+
+        breakdown = {
+            "messages": 0,
+            "file_changes": 0,
+            "decisions": 0,
+            "tasks": 0,
+            "preferences": 0,
+            "reads": 0,
+            "other": 0,
+        }
+        for r in per_op:
+            bucket = self._OPERATION_BUCKETS.get(r["operation"], "other")
+            breakdown[bucket] += int(r["tokens"] or 0)
+
         return {
             "total_tokens": int(row["total_tokens"]),
             "write_tokens": int(row["write_tokens"]),
@@ -545,6 +589,11 @@ class StorageManager:
                 {"agent": r["agent"], "tokens": int(r["tokens"]), "operations": int(r["operations"])}
                 for r in per_agent
             ],
+            "per_operation": [
+                {"operation": r["operation"], "tokens": int(r["tokens"]), "operations": int(r["operations"])}
+                for r in per_op
+            ],
+            "breakdown": breakdown,
         }
 
     # ── Search ───────────────────────────────────────────────────────

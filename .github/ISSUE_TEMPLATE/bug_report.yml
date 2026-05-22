@@ -1,0 +1,37 @@
+name: Bug report
+description: Report something that is broken or surprising
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Steps to reproduce, commands run, and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: amcl-server version
+      placeholder: "pip show amcl-server"
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+  - type: input
+    id: agent
+    attributes:
+      label: AI agent / IDE
+      placeholder: "Cursor, Codex, Claude Code, etc."

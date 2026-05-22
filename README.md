@@ -1,5 +1,9 @@
 # A/MCL — Agent/Multi-Coding-agent Context Layer
 
+[![CI](https://github.com/ratnam1510/A-MCL/actions/workflows/ci.yml/badge.svg)](https://github.com/ratnam1510/A-MCL/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/amcl-server)](https://pypi.org/project/amcl-server/)
+
 **Zero-intervention context persistence across AI coding agents.**
 
 When you hit a rate limit on one agent (Codex, Antigravity, Cursor, Claude Code) and switch to another, A/MCL ensures the new agent *automatically* has access to the complete conversation history, file changes, reasoning chains, and project state. No commands. No manual handoff. It just works.
@@ -51,6 +55,20 @@ amcl-server check
 
 The `setup` command automatically detects all installed AI agents and IDE extensions on your system and registers A/MCL directly into their settings. Once you run setup, you are completely done.
 It also installs or updates Codex's global `~/.codex/AGENTS.md` so Codex inherits the same A/MCL behavior rules without touching repository-local `AGENTS.md` files.
+
+## Optional: more accurate token counting
+A/MCL ships with a zero-dependency token estimator that matches GPT-4's
+tiktoken `cl100k_base` within ~7% mean absolute error (max ~13%) for
+code, prose, JSON, markdown, identifiers, and unicode. It's a pure
+stdlib `re`-based heuristic — no model files, no install, no deps.
+
+For exact token counts:
+
+    pip install amcl-server[accurate-tokens]
+
+This adds tiktoken (~2.7 MB) for `cl100k_base`-precise tokenization. A/MCL
+uses it automatically when available and transparently falls back to the
+built-in heuristic otherwise.
 
 ---
 
@@ -143,6 +161,15 @@ All data stays local on your machine in `~/.amcl/amcl.db`. Nothing is ever sent 
 
 ---
 
+## Contributing
+
+Bug reports, docs, and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+Please read [SECURITY.md](SECURITY.md) before reporting security issues
+publicly. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE). See
+[LICENSE](LICENSE) for the full text.

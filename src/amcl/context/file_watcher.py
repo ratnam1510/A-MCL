@@ -32,6 +32,15 @@ _IGNORE_EXTS = {
     ".db", ".sqlite", ".sqlite3", ".lock",
 }
 
+# Filename suffix patterns that aren't caught by `Path.suffix` but should
+# still be ignored — SQLite WAL/SHM/journal files in particular grow on
+# every commit and would otherwise spam the file_changes table.
+_IGNORE_NAME_SUFFIXES = (
+    ".db-wal", ".db-shm", ".db-journal",
+    ".sqlite-wal", ".sqlite-shm", ".sqlite-journal",
+    ".sqlite3-wal", ".sqlite3-shm", ".sqlite3-journal",
+)
+
 
 def _make_observer() -> Observer:
     """Use polling on macOS to avoid native FSEvents shutdown crashes."""
@@ -53,6 +62,9 @@ class _ChangeHandler(FileSystemEventHandler):
         if any(p in _IGNORE_DIRS or p.endswith(".egg-info") for p in parts):
             return True
         if Path(path).suffix in _IGNORE_EXTS:
+            return True
+        name = Path(path).name
+        if any(name.endswith(s) for s in _IGNORE_NAME_SUFFIXES):
             return True
         return False
 

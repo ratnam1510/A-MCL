@@ -90,14 +90,13 @@ def _build_project_html(proj: dict, idx: int) -> str:
     total_am = sum(s.get("count", 0) for s in agent_stats)
     convo = _summarize_messages(messages)
 
-    if tokens_burned:
-        tokens_metric_html = (
-            '<div class="pm-div"></div>'
-            f'<div class="pm"><span class="pm-v">{tokens_burned:,}</span>'
-            '<span class="pm-l">Tokens \U0001F525</span></div>'
-        )
-    else:
-        tokens_metric_html = ""
+    # Always render the tokens metric so fresh projects / un-backfilled installs
+    # see "0" instead of the counter vanishing from the UI.
+    tokens_metric_html = (
+        '<div class="pm-div"></div>'
+        f'<div class="pm"><span class="pm-v">{tokens_burned:,}</span>'
+        '<span class="pm-l">Tokens \U0001F525</span></div>'
+    )
 
     # ── Agent bars ──
     mx = max((s["count"] for s in agent_stats), default=1)
@@ -336,19 +335,18 @@ def generate_share_html(
     grand_files = sum(len(p["file_changes"]) for p in projects)
     grand_tokens = sum(p.get("tokens_burned", 0) for p in projects)
 
-    if grand_tokens:
-        token_burned_html = (
-            '<div style="display:flex;align-items:center;gap:20px;padding:18px 24px;'
-            'border-left:2px solid #C4654A;animation:fadeUp 0.7s cubic-bezier(0.4,0,0.2,1) 0.26s both">'
-            '<div style="flex:1">'
-            '<p style="font-size:9px;text-transform:uppercase;letter-spacing:0.24em;'
-            'color:#3A3530;font-weight:500;margin-bottom:8px">Tokens Burned \U0001F525</p>'
-            '<code style="font-size:15px;color:#E8E0D0;letter-spacing:-0.01em">'
-            f'<span style="color:#C4654A">{grand_tokens:,}</span> tokens</code>'
-            '</div></div>'
-        )
-    else:
-        token_burned_html = ""
+    # Always render the grand total so the counter shows "0" rather than
+    # disappearing for projects whose token usage hasn't been recorded yet.
+    token_burned_html = (
+        '<div style="display:flex;align-items:center;gap:20px;padding:18px 24px;'
+        'border-left:2px solid #C4654A;animation:fadeUp 0.7s cubic-bezier(0.4,0,0.2,1) 0.26s both">'
+        '<div style="flex:1">'
+        '<p style="font-size:9px;text-transform:uppercase;letter-spacing:0.24em;'
+        'color:#3A3530;font-weight:500;margin-bottom:8px">Tokens Burned \U0001F525</p>'
+        '<code style="font-size:15px;color:#E8E0D0;letter-spacing:-0.01em">'
+        f'<span style="color:#C4654A">{grand_tokens:,}</span> tokens</code>'
+        '</div></div>'
+    )
 
     project_panels = ""
     for i, proj in enumerate(projects):

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sqlite3
 import sys
 import tempfile
@@ -20,11 +19,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
 
 # ─────────────────────────────────────────────────────────────
 # Helpers
@@ -147,7 +141,7 @@ def test_storage_manager_normalizes_agent_fields():
 # ─────────────────────────────────────────────────────────────
 # 2. PROJECT DETECTION TESTS
 # ─────────────────────────────────────────────────────────────
-EXPECTED_VERSION = "1.3.0"
+EXPECTED_VERSION = "1.3.1"
 
 
 def test_detect_project_with_explicit_path():
@@ -163,13 +157,16 @@ def test_detect_project_with_explicit_path():
 
 
 def test_detect_project_from_root_directory():
-    """When CWD is /, detection doesn't crash and returns / gracefully."""
+    """When CWD is /, detection redirects to ~/.amcl/_no_project sentinel
+    instead of treating the entire filesystem as a project (which would
+    cause the token backfill to scan billions of bytes)."""
     from amcl.context.project_detector import detect_project
 
     info = detect_project("/")
-    assert info["path"] == "/"
-    assert info["name"] != ""  # should be "/" not empty
-    print("✅ Test 5: Detect project from root directory — no crash")
+    assert info["path"] != "/"
+    assert info["path"].endswith("_no_project")
+    assert info["name"] == "_no_project"
+    print("✅ Test 5: Detect project from root directory — redirects to sentinel")
 
 
 def test_detect_python_project():
@@ -1378,8 +1375,8 @@ def test_cli_version():
 
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
-    assert "1.3.0" in result.output
-    print("✅ Test 26: CLI version is correct (1.3.0)")
+    assert "1.3.1" in result.output
+    print("✅ Test 26: CLI version is correct (1.3.1)")
 
 
 def test_cli_status():
@@ -1671,7 +1668,7 @@ def main():
     errors = []
 
     print("=" * 60)
-    print("  A/MCL v1.3.0 — Comprehensive Test Suite")
+    print("  A/MCL v1.3.1 — Comprehensive Test Suite")
     print(f"  {len(ALL_TESTS)} tests across 9 categories")
     print("=" * 60)
     print()

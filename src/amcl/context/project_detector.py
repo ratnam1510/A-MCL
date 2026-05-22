@@ -9,6 +9,33 @@ import os
 from pathlib import Path
 
 
+_DANGEROUS_ROOTS = frozenset(
+    str(Path(p).resolve()) for p in (
+        "/", os.path.expanduser("~"), "/root", "/home", "/Users",
+        "/var", "/etc", "/tmp", "/private/tmp", "/private",
+    )
+)
+
+
+def _is_dangerous_root(p: str) -> bool:
+    """Reject paths that would scan large swathes of the filesystem
+    (root, home, /var, etc.) — projects must be a real subdirectory."""
+    if not p:
+        return True
+    try:
+        resolved = str(Path(p).resolve())
+    except Exception:
+        return True
+    if resolved in _DANGEROUS_ROOTS:
+        return True
+    # Anything < 2 path components on Unix or directly equal to a drive
+    # root on Windows is also unsafe.
+    parts = Path(resolved).parts
+    if len(parts) < 2:
+        return True
+    return False
+
+
 def detect_project(cwd: str | None = None) -> dict:
     """
     Detect the current project.
@@ -23,21 +50,22 @@ def detect_project(cwd: str | None = None) -> dict:
 
     if not project_path:
         current_cwd = os.getcwd()
-        if current_cwd and current_cwd not in ("/", os.path.expanduser("~")):
+        if current_cwd and not _is_dangerous_root(current_cwd):
             project_path = current_cwd
         else:
-            # Server was likely launched from / or ~ by an agent.
-            # This is the expected case — the caller (ensure_project)
-            # should have already resolved the real path via list_roots.
-            # Use cwd as a last resort.
-            project_path = current_cwd
+            # Agent launched A/MCL from / or ~ (likely the MCP server was
+            # spawned with no cwd). Fall back to a per-host sentinel inside
+            # ~/.amcl so we never accidentally treat the entire filesystem
+            # as a "project" (which would balloon token estimates by GB).
+            project_path = str(Path(os.path.expanduser("~/.amcl")) / "_no_project")
 
-    # Ensure we have a valid path even if everything is empty
-    if not project_path:
-        project_path = os.getcwd() or "/"
+    # Final guard: if the resolved path is still dangerous, redirect to the
+    # sentinel. This is what prevented the 200M-token phantom rows.
+    if _is_dangerous_root(project_path):
+        project_path = str(Path(os.path.expanduser("~/.amcl")) / "_no_project")
 
     info: dict = {
-        "name": Path(project_path).name or "unknown",
+        "name": Path(project_path).name or "no-project",
         "path": str(Path(project_path).resolve()),
         "language": "",
         "framework": "",

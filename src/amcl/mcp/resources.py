@@ -11,7 +11,6 @@ or fall back gracefully with a no-Context init.
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 

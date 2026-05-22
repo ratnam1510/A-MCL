@@ -26,7 +26,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="1.3.0", prog_name="amcl")
+@click.version_option(version="1.3.1", prog_name="amcl")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -213,7 +213,39 @@ def _gather_project_data(conn, pid):
         total_tokens = int(token_row["total_tokens"]) if token_row else 0
     except Exception:
         total_tokens = 0
-    return messages, decisions, file_changes, agent_stats, total_tokens
+
+    # Per-operation breakdown so share pages / CLI can show where tokens went
+    token_breakdown = {
+        "messages": 0,
+        "file_changes": 0,
+        "decisions": 0,
+        "tasks": 0,
+        "preferences": 0,
+        "reads": 0,
+        "other": 0,
+    }
+    OP_MAP = {
+        "message_write": "messages",
+        "file_change_write": "file_changes",
+        "decision_write": "decisions",
+        "task_write": "tasks",
+        "preference_write": "preferences",
+        "read": "reads",
+    }
+    try:
+        op_rows = conn.execute(
+            """SELECT operation, COALESCE(SUM(tokens), 0) AS t
+               FROM token_usage WHERE project_id = ?
+               GROUP BY operation""",
+            (pid,),
+        ).fetchall()
+        for r in op_rows:
+            key = OP_MAP.get(r["operation"], "other")
+            token_breakdown[key] += int(r["t"] or 0)
+    except Exception:
+        pass
+
+    return messages, decisions, file_changes, agent_stats, total_tokens, token_breakdown
 
 
 def _group_messages_into_sessions(conn, pid, messages):
@@ -265,7 +297,7 @@ def _group_messages_into_sessions(conn, pid, messages):
     if not messages:
         return []
 
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     grouped = []
     current_group = [messages[0]]
@@ -346,7 +378,7 @@ def _upload_html(filepath):
         data=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "A-MCL/1.3.0",
+            "User-Agent": "A-MCL/1.3.1",
         },
         method="POST",
     )
@@ -383,7 +415,7 @@ def _upload_json(projects, preferences):
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "A-MCL/1.3.0",
+            "User-Agent": "A-MCL/1.3.1",
         },
         method="POST",
     )
@@ -475,9 +507,14 @@ def share(output, no_open, export_all, upload):
 
         for row in selected_rows:
             pid = row["id"]
-            messages, decisions, file_changes, agent_stats, proj_tokens = _gather_project_data(
-                conn, pid
-            )
+            (
+                messages,
+                decisions,
+                file_changes,
+                agent_stats,
+                proj_tokens,
+                token_breakdown,
+            ) = _gather_project_data(conn, pid)
 
             # ── Tier 3: Conversation/session selection (only if single project) ──
             if len(selected_rows) == 1 and not export_all and messages:
@@ -538,6 +575,7 @@ def share(output, no_open, export_all, upload):
                     "file_changes": file_changes,
                     "agent_stats": agent_stats,
                     "tokens_burned": proj_tokens,
+                    "token_breakdown": token_breakdown,
                 }
             )
             total_msgs += len(messages)
@@ -620,12 +658,34 @@ def tokens_cmd(show_all):
 
     conn = get_connection()
     try:
+        # Lazily run the historical backfill the first time `tokens` is
+        # invoked on a DB whose token_usage is empty despite having source
+        # rows. After that the live write path keeps it current.
+        try:
+            from amcl.storage.database import ensure_tokens_backfilled
+            tu_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM token_usage"
+            ).fetchone()["c"]
+            src_count = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM messages) "
+                "+ (SELECT COUNT(*) FROM file_changes) "
+                "+ (SELECT COUNT(*) FROM decisions) AS c"
+            ).fetchone()["c"]
+            if int(tu_count) == 0 and int(src_count) > 0:
+                ensure_tokens_backfilled(conn)
+        except Exception:
+            pass
+
         try:
             grand_row = conn.execute(
                 """SELECT
                      COALESCE(SUM(tokens), 0) as total,
-                     COALESCE(SUM(CASE WHEN operation='write' THEN tokens ELSE 0 END), 0) as writes,
-                     COALESCE(SUM(CASE WHEN operation='read' THEN tokens ELSE 0 END), 0) as reads,
+                     COALESCE(SUM(CASE WHEN operation IN
+                       ('write','message_write','file_change_write',
+                        'decision_write','task_write','preference_write')
+                       THEN tokens ELSE 0 END), 0) as writes,
+                     COALESCE(SUM(CASE WHEN operation IN ('read','context_read')
+                       THEN tokens ELSE 0 END), 0) as reads,
                      COUNT(*) as ops
                    FROM token_usage"""
             ).fetchone()
@@ -677,6 +737,65 @@ def tokens_cmd(show_all):
             for ar in agent_rows:
                 click.echo(f"   {red}{int(ar['tokens']):>10,}{r}  {ar['agent']}")
             click.echo("")
+    finally:
+        conn.close()
+
+
+@main.command("tokens-rebuild")
+def tokens_rebuild_cmd():
+    """Wipe un-sourced token rows and re-run the incremental backfill."""
+    if not DB_PATH.exists():
+        click.echo("❌ Not initialized (run `amcl setup`)")
+        return
+
+    from amcl.storage.database import get_connection, _backfill_token_usage
+
+    o = "\033[38;5;208m"
+    d = "\033[2m"
+    g = "\033[38;5;156m"
+    r = "\033[0m"
+
+    conn = get_connection()
+    try:
+        try:
+            before_row = conn.execute(
+                "SELECT COUNT(*) AS c, COALESCE(SUM(tokens), 0) AS t FROM token_usage"
+            ).fetchone()
+            before_rows = int(before_row["c"])
+            before_tokens = int(before_row["t"])
+        except Exception:
+            before_rows, before_tokens = 0, 0
+
+        click.echo(f"\n{o}🧮 Rebuilding token usage…{r}")
+        click.echo(
+            f"   {d}before: {before_rows:,} rows · {before_tokens:,} tokens{r}"
+        )
+
+        click.echo(
+            f"   {d}⚠ wiping ALL token_usage rows and re-estimating from scratch{r}"
+        )
+        try:
+            conn.execute("DELETE FROM token_usage")
+            conn.commit()
+        except Exception as e:
+            click.echo(f"   ❌ Could not clear token_usage: {e}")
+            return
+
+        try:
+            _backfill_token_usage(conn)
+        except Exception as e:
+            click.echo(f"   ❌ Backfill failed: {e}")
+            return
+
+        after_row = conn.execute(
+            "SELECT COUNT(*) AS c, COALESCE(SUM(tokens), 0) AS t FROM token_usage"
+        ).fetchone()
+        after_rows = int(after_row["c"])
+        after_tokens = int(after_row["t"])
+
+        click.echo(
+            f"   {g}after:  {after_rows:,} rows · {after_tokens:,} tokens{r}\n"
+        )
     finally:
         conn.close()
 
