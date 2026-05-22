@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Repository prepared for open-source release: added `LICENSE`,
   `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, and
-  `CODE_OF_CONDUCT.md`; added GitHub CI, issue/PR templates, and
-  Dependabot; removed tracked build artifacts (`__pycache__/`,
+  `CODE_OF_CONDUCT.md`; added GitHub CI and issue/PR templates; removed
+  tracked build artifacts (`__pycache__/`,
   `*.egg-info/`) and local scratch scripts from version control.
 - Fixed `amcl-share-backend` gitignore so `.env.local.example` can be
   committed; expanded root `.gitignore` for Node/Next build outputs.
