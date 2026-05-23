@@ -1593,7 +1593,6 @@ def _register_claude_code(script_path: str) -> list[str]:
 
 def _check_claude_code_integrations(home: Path) -> None:
     """Report Claude Code MCP registration (separate from Claude Desktop)."""
-    agent_env_name = "claude"
     claude_json = home / ".claude.json"
 
     if not claude_json.exists():
@@ -1641,7 +1640,7 @@ def _check_claude_code_integrations(home: Path) -> None:
             if project_file.get("mcpServers", {}).get("amcl"):
                 click.echo(f"   ✅ Claude Code (project .mcp.json): {mcp_json}")
             else:
-                click.echo(f"   ❌ Claude Code (project .mcp.json): A/MCL NOT configured")
+                click.echo("   ❌ Claude Code (project .mcp.json): A/MCL NOT configured")
         except (json.JSONDecodeError, OSError):
             click.echo(f"   ⚠️  Claude Code (project .mcp.json): could not parse {mcp_json}")
     else:
