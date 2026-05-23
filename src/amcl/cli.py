@@ -26,7 +26,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="1.3.1", prog_name="amcl")
+@click.version_option(version="1.3.2", prog_name="amcl")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -378,7 +378,7 @@ def _upload_html(filepath):
         data=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "A-MCL/1.3.1",
+            "User-Agent": "A-MCL/1.3.2",
         },
         method="POST",
     )
@@ -415,7 +415,7 @@ def _upload_json(projects, preferences):
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "A-MCL/1.3.1",
+            "User-Agent": "A-MCL/1.3.2",
         },
         method="POST",
     )
@@ -970,8 +970,13 @@ def check():
         else:
             click.echo(f"   ❌ {agent_name}: No rule file ({rule_path})")
 
+    click.echo("")
+    click.echo("🔍 Checking Claude Code (CLI) integrations...")
+    _check_claude_code_integrations(home)
+
     if not found_any:
-        click.echo("   ℹ️  No supported AI agents detected on this system.")
+        click.echo("")
+        click.echo("   ℹ️  No other supported AI agent config files detected on this system.")
 
     click.echo("")
     click.echo("Run `amcl setup` to automatically fix any missing configurations.")
@@ -1457,12 +1462,198 @@ def _build_amcl_config(script_path: str, agent_env_name: str) -> dict:
     }
 
 
+def _build_claude_code_server_entry(script_path: str, agent_env_name: str) -> dict:
+    """Claude Code stdio MCP entry (user/local/project scopes)."""
+    entry = _build_amcl_config(script_path, agent_env_name)["amcl"].copy()
+    entry["type"] = "stdio"
+    return entry
+
+
+def _load_json_object(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    content = path.read_text()
+    if not content.strip():
+        return {}
+    return json.loads(content)
+
+
+def _write_json_object(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def _upsert_top_level_mcp_server(
+    path: Path, script_path: str, agent_env_name: str
+) -> str:
+    """Merge amcl into a JSON file's top-level mcpServers key."""
+    entry = _build_claude_code_server_entry(script_path, agent_env_name)
+    data = _load_json_object(path)
+    servers = data.setdefault("mcpServers", {})
+    if servers.get("amcl") == entry:
+        return "already configured"
+    servers["amcl"] = entry
+    _write_json_object(path, data)
+    return "updated" if "amcl" in servers else "added"
+
+
+def _register_claude_code(script_path: str) -> list[str]:
+    """Register A/MCL with Claude Code (CLI), not Claude Desktop.
+
+    Claude Code stores MCP servers in:
+    - ``~/.claude.json`` → top-level ``mcpServers`` (user scope)
+    - ``~/.claude.json`` → ``projects[<cwd>].mcpServers`` (local scope)
+    - ``<project>/.mcp.json`` → ``mcpServers`` (project scope, team-shared)
+
+    Claude Desktop uses ``claude_desktop_config.json`` instead — a separate app.
+    """
+    home = Path.home()
+    agent_env_name = "claude"
+    registered: list[str] = []
+
+    # User scope — available in every project for this user.
+    claude_json = home / ".claude.json"
+    try:
+        status = _upsert_top_level_mcp_server(
+            claude_json, script_path, agent_env_name
+        )
+        suffix = (
+            " (already configured)" if status == "already configured" else ""
+        )
+        registered.append(
+            f"Claude Code user scope ({claude_json}) → agent={agent_env_name}{suffix}"
+        )
+    except (json.JSONDecodeError, OSError) as exc:
+        registered.append(
+            f"Claude Code user scope ({claude_json}) → failed: {exc}"
+        )
+
+    # Local scope — current working directory project entry.
+    try:
+        project_dir = str(Path.cwd().resolve())
+        data = _load_json_object(claude_json)
+        projects = data.setdefault("projects", {})
+        project_entry = projects.setdefault(project_dir, {})
+        servers = project_entry.setdefault("mcpServers", {})
+        entry = _build_claude_code_server_entry(script_path, agent_env_name)
+        already = servers.get("amcl") == entry
+        servers["amcl"] = entry
+        _write_json_object(claude_json, data)
+        suffix = " (already configured)" if already else ""
+        registered.append(
+            f"Claude Code local scope ({claude_json} → {project_dir})"
+            f" → agent={agent_env_name}{suffix}"
+        )
+    except (json.JSONDecodeError, OSError) as exc:
+        registered.append(
+            f"Claude Code local scope ({claude_json}) → failed: {exc}"
+        )
+
+    # Project scope — .mcp.json checked into the repo for teammates.
+    try:
+        mcp_json = Path.cwd() / ".mcp.json"
+        status = _upsert_top_level_mcp_server(
+            mcp_json, script_path, agent_env_name
+        )
+        suffix = (
+            " (already configured)" if status == "already configured" else ""
+        )
+        registered.append(
+            f"Claude Code project scope ({mcp_json}) → agent={agent_env_name}{suffix}"
+        )
+    except (json.JSONDecodeError, OSError) as exc:
+        registered.append(
+            f"Claude Code project scope ({Path.cwd() / '.mcp.json'}) → failed: {exc}"
+        )
+
+    # Optional: pre-approve MCP tools (matches other servers like pencil).
+    settings_path = home / ".claude" / "settings.json"
+    try:
+        if settings_path.exists():
+            settings = _load_json_object(settings_path)
+            permissions = settings.setdefault("permissions", {})
+            allow = permissions.setdefault("allow", [])
+            if "mcp__amcl" not in allow:
+                allow.append("mcp__amcl")
+                _write_json_object(settings_path, settings)
+                registered.append(
+                    f"Claude Code permissions ({settings_path}) → added mcp__amcl"
+                )
+            else:
+                registered.append(
+                    f"Claude Code permissions ({settings_path}) → mcp__amcl already allowed"
+                )
+    except (json.JSONDecodeError, OSError) as exc:
+        registered.append(
+            f"Claude Code permissions ({settings_path}) → failed: {exc}"
+        )
+
+    return registered
+
+
+def _check_claude_code_integrations(home: Path) -> None:
+    """Report Claude Code MCP registration (separate from Claude Desktop)."""
+    agent_env_name = "claude"
+    claude_json = home / ".claude.json"
+
+    if not claude_json.exists():
+        click.echo(
+            f"   ❌ Claude Code: no {claude_json} (run `amcl setup` from Claude Code's machine)"
+        )
+        return
+
+    try:
+        data = _load_json_object(claude_json)
+    except (json.JSONDecodeError, OSError):
+        click.echo(f"   ⚠️  Claude Code: could not parse {claude_json}")
+        return
+
+    user_entry = data.get("mcpServers", {}).get("amcl")
+    if user_entry:
+        env = user_entry.get("env", {})
+        click.echo(
+            f"   ✅ Claude Code (user scope): agent={env.get('AMCL_AGENT_NAME', '?')}, "
+            f"cmd={user_entry.get('command', '?')}"
+        )
+    else:
+        click.echo(
+            f"   ❌ Claude Code (user scope): A/MCL NOT in {claude_json} mcpServers"
+        )
+
+    project_dir = str(Path.cwd().resolve())
+    local_entry = (
+        data.get("projects", {}).get(project_dir, {}).get("mcpServers", {}).get("amcl")
+    )
+    if local_entry:
+        env = local_entry.get("env", {})
+        click.echo(
+            f"   ✅ Claude Code (local scope, this cwd): agent={env.get('AMCL_AGENT_NAME', '?')}"
+        )
+    else:
+        click.echo(
+            f"   ❌ Claude Code (local scope, this cwd): not configured for {project_dir}"
+        )
+
+    mcp_json = Path.cwd() / ".mcp.json"
+    if mcp_json.exists():
+        try:
+            project_file = _load_json_object(mcp_json)
+            if project_file.get("mcpServers", {}).get("amcl"):
+                click.echo(f"   ✅ Claude Code (project .mcp.json): {mcp_json}")
+            else:
+                click.echo(f"   ❌ Claude Code (project .mcp.json): A/MCL NOT configured")
+        except (json.JSONDecodeError, OSError):
+            click.echo(f"   ⚠️  Claude Code (project .mcp.json): could not parse {mcp_json}")
+    else:
+        click.echo(f"   ℹ️  Claude Code (project .mcp.json): none at {mcp_json}")
+
+
 def _try_auto_register(script_path: str) -> list[str]:
     """Try to add A/MCL to all known MCP config locations."""
     home = Path.home()
     config_locations = _get_agent_config_locations(home)
 
-    registered = []
+    registered = list(_register_claude_code(script_path))
 
     for agent_name, paths in config_locations.items():
         agent_env_name = _derive_agent_env_name(agent_name)

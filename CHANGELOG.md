@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Repository prepared for open-source release: added `LICENSE`,
-  `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, and
-  `CODE_OF_CONDUCT.md`; added GitHub CI and issue/PR templates; removed
-  tracked build artifacts (`__pycache__/`,
-  `*.egg-info/`) and local scratch scripts from version control.
+## [1.3.2]
+
+- **Claude Code:** `amcl setup` now registers the MCP server in
+  `~/.claude.json` (user + local scope), project `.mcp.json`, and adds
+  `mcp__amcl` to Claude Code permissions. Previously only Claude Desktop
+  and `CLAUDE.md` rules were configured, so tools never connected.
+- Open-source release prep: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`,
+  `CODE_OF_CONDUCT.md`, GitHub CI, issue/PR templates; cleaned tracked
+  build artifacts from version control.
 - Fixed `amcl-share-backend` gitignore so `.env.local.example` can be
   committed; expanded root `.gitignore` for Node/Next build outputs.
 

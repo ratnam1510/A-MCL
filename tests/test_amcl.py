@@ -141,7 +141,7 @@ def test_storage_manager_normalizes_agent_fields():
 # ─────────────────────────────────────────────────────────────
 # 2. PROJECT DETECTION TESTS
 # ─────────────────────────────────────────────────────────────
-EXPECTED_VERSION = "1.3.1"
+EXPECTED_VERSION = "1.3.2"
 
 
 def test_detect_project_with_explicit_path():
@@ -1375,8 +1375,8 @@ def test_cli_version():
 
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
-    assert "1.3.1" in result.output
-    print("✅ Test 26: CLI version is correct (1.3.1)")
+    assert "1.3.2" in result.output
+    print("✅ Test 26: CLI version is correct (1.3.2)")
 
 
 def test_cli_status():
@@ -1481,6 +1481,41 @@ def test_scan_codex_sessions_filters_bootstrap_and_commentary():
         assert session["messages"][0]["content"] == "Add Codex support"
         assert session["messages"][1]["content"] == "Codex support is in."
         print("✅ Test 28: Codex session import filters bootstrap/commentary")
+
+
+def test_register_claude_code_writes_claude_json_and_mcp_json():
+    """Claude Code MCP registration updates ~/.claude.json and project .mcp.json."""
+    from amcl.cli import _register_claude_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        work = home / "workspace"
+        work.mkdir(parents=True)
+        claude_json = home / ".claude.json"
+        claude_json.write_text('{"projects": {}}')
+
+        with patch("amcl.cli.Path.home", return_value=home), patch(
+            "amcl.cli.Path.cwd", return_value=work
+        ):
+            registered = _register_claude_code("/usr/local/bin/amcl-server")
+
+        data = json.loads(claude_json.read_text())
+        assert data["mcpServers"]["amcl"]["command"] == "/usr/local/bin/amcl-server"
+        assert data["mcpServers"]["amcl"]["args"] == ["start"]
+        assert data["mcpServers"]["amcl"]["type"] == "stdio"
+        assert data["mcpServers"]["amcl"]["env"]["AMCL_AGENT_NAME"] == "claude"
+
+        project_key = str(work.resolve())
+        assert data["projects"][project_key]["mcpServers"]["amcl"]["command"] == (
+            "/usr/local/bin/amcl-server"
+        )
+
+        mcp_json = work / ".mcp.json"
+        assert mcp_json.exists()
+        mcp_data = json.loads(mcp_json.read_text())
+        assert mcp_data["mcpServers"]["amcl"]["env"]["AMCL_AGENT_NAME"] == "claude"
+        assert any("Claude Code user scope" in item for item in registered)
+        print("✅ Test 29b: Claude Code MCP registration writes claude.json + .mcp.json")
 
 
 def test_try_auto_register_writes_codex_toml():
@@ -1653,6 +1688,7 @@ ALL_TESTS = [
     test_cli_status,
     # Codex support
     test_scan_codex_sessions_filters_bootstrap_and_commentary,
+    test_register_claude_code_writes_claude_json_and_mcp_json,
     test_try_auto_register_writes_codex_toml,
     test_install_agent_rules_creates_codex_global_agents_file,
     test_cli_check_reports_codex_and_global_agents,
@@ -1668,7 +1704,7 @@ def main():
     errors = []
 
     print("=" * 60)
-    print("  A/MCL v1.3.1 — Comprehensive Test Suite")
+    print("  A/MCL v1.3.2 — Comprehensive Test Suite")
     print(f"  {len(ALL_TESTS)} tests across 9 categories")
     print("=" * 60)
     print()

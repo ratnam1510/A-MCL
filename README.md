@@ -77,7 +77,9 @@ built-in heuristic otherwise.
 A/MCL automatically integrates with:
 - **Cursor** (`~/.cursor/mcp.json`)
 - **Codex** (`~/.codex/config.toml`)
-- **Claude Desktop / Antigravity** (`Library/Application Support/Claude/claude_desktop_config.json`)
+- **Claude Code** (`~/.claude.json` user scope + project `.mcp.json`)
+- **Claude Desktop** (`Library/Application Support/Claude/claude_desktop_config.json`)
+- **Antigravity** (`~/.gemini/antigravity/mcp_config.json`)
 - **Amp** (`~/.amp/mcp.json`)
 - **Roo / Cline** (VSCode & Cursor instances)
 - **Generic MCP clients** (`~/.mcp/config.json`)

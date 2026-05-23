@@ -248,13 +248,13 @@ CREATE INDEX IF NOT EXISTS idx_token_usage_source ON token_usage(source_table, s
 
 
 def _apply_v6_migration(conn: sqlite3.Connection) -> None:
-    """Auto-heal token-usage damage from pre-1.3.1 installs.
+    """Auto-heal token-usage damage from pre-1.3.2 installs.
 
     Two specific bugs are remediated here so that nobody upgrading from
-    1.3.0 (or fresh-installing on a system that already has a damaged DB)
+    1.3.1 (or fresh-installing on a system that already has a damaged DB)
     sees nonsense token totals or phantom 'unknown' agents:
 
-    1. **Phantom 200M-token rows**: pre-1.3.1 ``project_detector`` could
+    1. **Phantom 200M-token rows**: pre-1.3.2 ``project_detector`` could
        register a project with ``path='/'`` (or ``'~'``) when ``os.getcwd()``
        returned an empty string. The token backfill then walked the whole
        filesystem and hit the 200M-per-project cap on every session,
@@ -834,7 +834,7 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
             # Tables may not exist on truly fresh installs — safe to skip.
             pass
         # Re-run the V6 cleanup so any phantom rows the backfill just
-        # produced (from pre-1.3.1 projects with dangerous root paths)
+        # produced (from pre-1.3.2 projects with dangerous root paths)
         # get vacuumed before the user ever sees a token count.
         try:
             _apply_v6_migration(conn)

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "amcl": {
+      "command": "/usr/local/bin/amcl-server",
+      "args": [
+        "start"
+      ],
+      "env": {
+        "AMCL_DATA_DIR": "/Users/ratnamshah/.amcl",
+        "AMCL_AGENT_NAME": "claude",
+        "AMCL_LOG_LEVEL": "info"
+      },
+      "type": "stdio"
+    }
+  }
+}
