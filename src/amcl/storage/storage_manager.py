@@ -5,6 +5,7 @@ StorageManager — typed CRUD layer over the A/MCL SQLite database.
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from pathlib import Path
 
@@ -24,6 +25,10 @@ class StorageManager:
     """High-level CRUD interface wrapping the SQLite database."""
 
     def __init__(self, db_path: Path | None = None) -> None:
+        # Remember the path so collaborators (e.g. FileWatcher running on a
+        # separate thread) can open their OWN connection to the same DB
+        # instead of sharing this one across threads.
+        self._db_path = db_path
         self._conn = get_connection(db_path)
 
     def close(self) -> None:
@@ -43,36 +48,29 @@ class StorageManager:
         git_branch: str = "",
         git_commit: str = "",
     ) -> int:
-        """Return the project id, creating the row if needed."""
+        """Return the project id, creating the row if needed.
+
+        Uses an atomic UPSERT so two agents racing to register the same new
+        project path do not collide on the UNIQUE(path) constraint.
+        """
+        name_val = name or Path(path).name
+        self._conn.execute(
+            """INSERT INTO projects (name, path, language, framework, git_branch, git_commit)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(path) DO UPDATE SET
+                   name=excluded.name,
+                   language=excluded.language,
+                   framework=excluded.framework,
+                   git_branch=excluded.git_branch,
+                   git_commit=excluded.git_commit,
+                   updated_at=datetime('now')""",
+            (name_val, path, language, framework, git_branch, git_commit),
+        )
+        self._conn.commit()
         row = self._conn.execute(
             "SELECT id FROM projects WHERE path = ?", (path,)
         ).fetchone()
-        if row:
-            # Update metadata on reconnect
-            self._conn.execute(
-                """UPDATE projects
-                   SET name=?, language=?, framework=?,
-                       git_branch=?, git_commit=?, updated_at=datetime('now')
-                   WHERE id=?""",
-                (name or "", language, framework, git_branch, git_commit, row["id"]),
-            )
-            self._conn.commit()
-            return row["id"]
-
-        cur = self._conn.execute(
-            """INSERT INTO projects (name, path, language, framework, git_branch, git_commit)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                name or Path(path).name,
-                path,
-                language,
-                framework,
-                git_branch,
-                git_commit,
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
+        return int(row["id"])
 
     def get_project_info(self, project_id: int) -> dict | None:
         row = self._conn.execute(
@@ -623,24 +621,43 @@ class StorageManager:
 
         since_str = since if since else "1970-01-01"
 
-        messages = self._conn.execute(
-            """SELECT m.* 
+        def _fts(sql: str, like_sql: str, like_params: tuple) -> list:
+            """Run an FTS5 MATCH query, falling back to a LIKE scan if the
+            user's query produces invalid FTS5 syntax (which raises
+            sqlite3.OperationalError) so a search never hard-fails."""
+            try:
+                return self._conn.execute(
+                    sql, (project_id, since_str, fts_query)
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return self._conn.execute(like_sql, like_params).fetchall()
+
+        messages = _fts(
+            """SELECT m.*
                FROM messages m
                JOIN messages_fts fts ON m.rowid = fts.rowid
                WHERE m.project_id = ? AND m.timestamp >= ? AND messages_fts MATCH ?
                  AND (m.context_note = '' OR m.context_note NOT LIKE 'noise:%')
                ORDER BY m.timestamp LIMIT 20""",
-            (project_id, since_str, fts_query),
-        ).fetchall()
+            """SELECT m.* FROM messages m
+               WHERE m.project_id = ? AND m.timestamp >= ? AND m.content LIKE ?
+                 AND (m.context_note = '' OR m.context_note NOT LIKE 'noise:%')
+               ORDER BY m.timestamp LIMIT 20""",
+            (project_id, since_str, q),
+        )
 
-        decisions = self._conn.execute(
-            """SELECT d.* 
+        decisions = _fts(
+            """SELECT d.*
                FROM decisions d
                JOIN decisions_fts fts ON d.id = fts.rowid
                WHERE d.project_id = ? AND d.timestamp >= ? AND decisions_fts MATCH ?
                ORDER BY d.timestamp LIMIT 20""",
-            (project_id, since_str, fts_query),
-        ).fetchall()
+            """SELECT d.* FROM decisions d
+               WHERE d.project_id = ? AND d.timestamp >= ?
+                 AND (d.question LIKE ? OR d.answer LIKE ? OR d.reasoning LIKE ?)
+               ORDER BY d.timestamp LIMIT 20""",
+            (project_id, since_str, q, q, q),
+        )
 
         # Tasks still use regular LIKE since they're metadata-heavy
         tasks = self._conn.execute(
@@ -651,14 +668,18 @@ class StorageManager:
         ).fetchall()
 
         # Also search file changes now that we have FTS5!
-        file_changes = self._conn.execute(
-            """SELECT fc.* 
+        file_changes = _fts(
+            """SELECT fc.*
                FROM file_changes fc
                JOIN file_changes_fts fts ON fc.id = fts.rowid
                WHERE fc.project_id = ? AND fc.timestamp >= ? AND file_changes_fts MATCH ?
                ORDER BY fc.timestamp LIMIT 20""",
-            (project_id, since_str, fts_query),
-        ).fetchall()
+            """SELECT fc.* FROM file_changes fc
+               WHERE fc.project_id = ? AND fc.timestamp >= ?
+                 AND (fc.file_path LIKE ? OR fc.summary LIKE ?)
+               ORDER BY fc.timestamp LIMIT 20""",
+            (project_id, since_str, q, q),
+        )
 
         if detail == "full":
             full_messages = []

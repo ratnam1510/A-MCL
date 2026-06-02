@@ -35,12 +35,18 @@ export async function GET(
         }
         const html = await response.text();
 
-        // Return it with full styling enabled (No CSP blocking)
+        // Serve the self-generated HTML with a hardened CSP tuned to its
+        // needs: inline styles, inline <style>, one inline <script> + inline
+        // onclick handlers, and Google Fonts. Defense-in-depth; auth on the
+        // upload routes is the primary control.
         return new NextResponse(html, {
             headers: {
                 'Content-Type': 'text/html; charset=utf-8',
                 'Cache-Control': 'public, max-age=31536000, immutable',
-                // Critical: explicit lack of content-security-policy
+                'Content-Security-Policy':
+                    "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; img-src data: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+                'X-Content-Type-Options': 'nosniff',
+                'X-Frame-Options': 'DENY',
             }
         });
     } catch (err) {

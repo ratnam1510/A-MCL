@@ -15,9 +15,13 @@ export async function POST(request: Request) {
         const authHeader = request.headers.get('authorization');
         const secret = process.env.AMCL_SHARE_SECRET;
 
-        // Only enforce auth if the environment variable is set.
-        // Recommended to set this in Vercel to prevent abuse.
-        if (secret && authHeader !== `Bearer ${secret}`) {
+        // Fail closed: if the secret is not configured, refuse all uploads.
+        if (!secret) {
+            return NextResponse.json({ error: 'Sharing not configured' }, { status: 503 });
+        }
+
+        // Enforce bearer auth.
+        if (authHeader !== `Bearer ${secret}`) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -26,6 +30,12 @@ export async function POST(request: Request) {
 
         if (!file || !(file instanceof File)) {
             return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+        }
+
+        // Reject uploads larger than 5 MB.
+        const MAX_SIZE = 5 * 1024 * 1024;
+        if (file.size > MAX_SIZE) {
+            return NextResponse.json({ error: 'File too large' }, { status: 413 });
         }
 
         const id = generateRandomId();

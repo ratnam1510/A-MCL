@@ -350,9 +350,28 @@ def _group_messages_into_sessions(conn, pid, messages):
     return grouped
 
 
+def _share_auth_headers() -> dict:
+    """Build auth headers for the share backend.
+
+    The backend requires a bearer secret (it refuses uploads when its own
+    AMCL_SHARE_SECRET is unset). The CLI reads the same secret from the
+    environment so a user running their own backend can authenticate.
+    """
+    secret = os.environ.get("AMCL_SHARE_SECRET", "").strip()
+    headers = {"User-Agent": "A-MCL/1.3.2"}
+    if secret:
+        headers["Authorization"] = f"Bearer {secret}"
+    return headers
+
+
 def _upload_html(filepath):
-    """Upload a file to the custom A/MCL sharing backend and return the URL."""
+    """Upload an HTML file to the A/MCL sharing backend.
+
+    Returns (url, error): url is the share link on success, else None with a
+    human-readable error string.
+    """
     import urllib.request
+    import urllib.error
     import json
 
     boundary = "----AMCLShareBoundary"
@@ -373,31 +392,42 @@ def _upload_html(filepath):
         + f"\r\n--{boundary}--\r\n".encode()
     )
 
+    headers = _share_auth_headers()
+    headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
     req = urllib.request.Request(
         "https://amcl.jpdz.app/api/upload",
         data=body,
-        headers={
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "A-MCL/1.3.2",
-        },
+        headers=headers,
         method="POST",
     )
 
     try:
         resp = urllib.request.urlopen(req, timeout=30)
         res_data = json.loads(resp.read().decode())
-        return res_data.get("url")
-    except Exception:
-        return None
+        return res_data.get("url"), None
+    except urllib.error.HTTPError as e:
+        if e.code == 503:
+            return None, "server has sharing disabled (AMCL_SHARE_SECRET not configured on backend)"
+        if e.code == 401:
+            return None, "unauthorized — set AMCL_SHARE_SECRET to match the backend"
+        if e.code == 413:
+            return None, "export too large to upload"
+        return None, f"server returned HTTP {e.code}"
+    except Exception as e:
+        return None, str(e)
 
 
 def _upload_json(projects, preferences):
-    """Upload JSON data to the A/MCL sharing backend and return the share URL.
+    """Upload JSON data to the A/MCL sharing backend.
 
     The backend renders the data as a proper Next.js page, so the share page
     uses the exact same TSX/CSS as the home page — no style mismatches.
+
+    Returns (url, error): url is the share link on success, else None with a
+    human-readable error string.
     """
     import urllib.request
+    import urllib.error
     import json
     from datetime import datetime
 
@@ -410,22 +440,29 @@ def _upload_json(projects, preferences):
         default=str,
     ).encode("utf-8")
 
+    headers = _share_auth_headers()
+    headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
         "https://amcl.jpdz.app/api/share",
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "A-MCL/1.3.2",
-        },
+        headers=headers,
         method="POST",
     )
 
     try:
         resp = urllib.request.urlopen(req, timeout=30)
         res_data = json.loads(resp.read().decode())
-        return res_data.get("url")
-    except Exception:
-        return None
+        return res_data.get("url"), None
+    except urllib.error.HTTPError as e:
+        if e.code == 503:
+            return None, "server has sharing disabled (AMCL_SHARE_SECRET not configured on backend)"
+        if e.code == 401:
+            return None, "unauthorized — set AMCL_SHARE_SECRET to match the backend"
+        if e.code == 413:
+            return None, "export too large to upload"
+        return None, f"server returned HTTP {e.code}"
+    except Exception as e:
+        return None, str(e)
 
 
 @main.command()
@@ -622,14 +659,36 @@ def share(output, no_open, export_all, upload):
 
         # ── Upload if --url ──
         if upload:
-            click.echo(f"\n   {d}📤 Uploading to amcl.jpdz.app...{r}")
-            link = _upload_json(projects, preferences)
-            if not link:
-                link = _upload_html(filename)
-            if link:
-                click.echo(f"   {g}✅ Share this link:{r} {link}")
+            # Privacy gate: uploading sends the FULL conversation content
+            # (messages, decisions, file paths — anything pasted into chats,
+            # including secrets) to a third-party host where it is served from
+            # a public, hard-to-guess URL with no expiry. Require explicit
+            # consent before any data leaves the machine.
+            click.echo(
+                f"\n   ⚠️  {o}Uploading sends your full conversation history "
+                f"(messages, decisions, file paths — and anything secret pasted "
+                f"into chats) to amcl.jpdz.app.{r}"
+            )
+            click.echo(
+                f"   {d}It is stored at a public, unguessable URL with no expiry. "
+                f"Review the export before sharing the link.{r}"
+            )
+            if not click.confirm("   Upload anyway?", default=False):
+                click.echo(f"   {d}Skipped upload. Local file: {filename}{r}")
             else:
-                click.echo(f"   ❌ Upload failed. Share the file manually: {filename}")
+                click.echo(f"\n   {d}📤 Uploading to amcl.jpdz.app...{r}")
+                link, err = _upload_json(projects, preferences)
+                if not link:
+                    json_err = err
+                    link, err = _upload_html(filename)
+                    # Prefer reporting the JSON endpoint's error if both failed.
+                    err = err or json_err
+                if link:
+                    click.echo(f"   {g}✅ Share this link:{r} {link}")
+                else:
+                    click.echo(
+                        f"   ❌ Upload failed ({err}). Share the file manually: {filename}"
+                    )
 
         if not no_open and not upload:
             webbrowser.open(f"file://{filename}")

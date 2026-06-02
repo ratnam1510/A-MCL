@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from amcl.agent_identity import normalize_agent_name
@@ -66,31 +66,39 @@ def _slug_to_path(slug: str) -> str:
         current = "/"
         remaining = parts
 
-    # Try simple exact match first
+    # Simple join candidate — used as the fallback if anything below fails.
     candidate = os.path.join(current, *remaining) if remaining else current
-    if os.path.exists(candidate):
-        return candidate
 
-    # Try matching incrementally
-    for i, part in enumerate(remaining):
-        test = os.path.join(current, part)
-        if os.path.exists(test):
-            current = test
-        else:
-            # Maybe it should be joined with Previous using :
-            test_colon = current + ":" + part
-            if os.path.exists(test_colon):
-                current = test_colon
+    try:
+        # Try simple exact match first
+        if os.path.exists(candidate):
+            return candidate
+
+        # Try matching incrementally
+        for i, part in enumerate(remaining):
+            test = os.path.join(current, part)
+            if os.path.exists(test):
+                current = test
             else:
-                test_hyphen = current + "-" + part
-                if os.path.exists(test_hyphen):
-                    current = test_hyphen
+                # Maybe it should be joined with Previous using :
+                test_colon = current + ":" + part
+                if os.path.exists(test_colon):
+                    current = test_colon
                 else:
-                    rest = os.path.join(*remaining[i:]) if remaining[i:] else ""
-                    current = os.path.join(current, rest)
-                    break
+                    test_hyphen = current + "-" + part
+                    if os.path.exists(test_hyphen):
+                        current = test_hyphen
+                    else:
+                        rest = (
+                            os.path.join(*remaining[i:]) if remaining[i:] else ""
+                        )
+                        current = os.path.join(current, rest)
+                        break
 
-    return current
+        return current
+    except Exception:
+        # Never raise — fall back to the simple join candidate.
+        return candidate
 
 
 def scan_cursor() -> list[dict]:
@@ -225,9 +233,9 @@ def scan_claude_code() -> list[dict]:
                             "role": "user",
                             "content": display,
                             "agent": _normalized_import_agent("claude-code"),
-                            "timestamp": datetime.utcfromtimestamp(ts / 1000).strftime(
-                                "%Y-%m-%d %H:%M:%S"
-                            )
+                            "timestamp": datetime.fromtimestamp(
+                                ts / 1000, tz=timezone.utc
+                            ).strftime("%Y-%m-%d %H:%M:%S")
                             if ts
                             else "",
                         }
@@ -377,22 +385,27 @@ def import_into_db(conn, scan_results: dict[str, list[dict]]) -> dict:
                 pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                 new_projects += 1
 
+            # Prefetch existing (role, content) pairs for this project so we
+            # avoid an O(n) per-message SELECT.
+            existing = {
+                (r["role"], r["content"])
+                for r in conn.execute(
+                    "SELECT role, content FROM messages WHERE project_id = ?",
+                    (pid,),
+                )
+            }
+
             # Import messages with deduplication
             for msg in sess["messages"]:
                 content = msg["content"]
                 role = msg["role"]
                 agent = _normalized_import_agent(msg.get("agent", agent_name))
-                ts = msg.get("timestamp") or datetime.utcnow().strftime(
+                ts = msg.get("timestamp") or datetime.now(timezone.utc).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
 
                 # Check if a nearly identical message already exists
-                existing = conn.execute(
-                    "SELECT id FROM messages WHERE project_id = ? AND content = ? AND role = ?",
-                    (pid, content, role),
-                ).fetchone()
-
-                if existing:
+                if (role, content) in existing:
                     skipped += 1
                     continue
 
@@ -413,6 +426,7 @@ def import_into_db(conn, scan_results: dict[str, list[dict]]) -> dict:
                         f"Imported from {agent_name}",
                     ),
                 )
+                existing.add((role, content))
                 imported_msgs += 1
 
     conn.commit()

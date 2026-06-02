@@ -114,10 +114,17 @@ class FileWatcher:
         project_id: int,
         project_root: str,
     ) -> None:
-        self._storage = storage
+        # `storage` is only used to discover the DB path. The watchdog
+        # callbacks run on the observer's OWN thread, so they must NOT share
+        # the caller's sqlite connection (a single connection is not safe for
+        # concurrent use across threads even with check_same_thread=False).
+        # Instead we open a dedicated connection on start() that only the
+        # observer thread touches.
+        self._owner_db_path = getattr(storage, "_db_path", None)
         self._project_id = project_id
         self._root = project_root
         self._observer: Optional[Observer] = None
+        self._own_storage: Optional[StorageManager] = None
 
     def start(self) -> None:
         if self._observer is not None:
@@ -130,7 +137,10 @@ class FileWatcher:
         if str(root_path.resolve()) in ("/", os.path.expanduser("~")):
             logger.warning("Project root is / or ~, skipping file watcher: %s", self._root)
             return
-        handler = _ChangeHandler(self._storage, self._project_id, self._root)
+        # Dedicated connection for the watcher thread (same DB file; WAL +
+        # busy_timeout coordinate writes between this and the main connection).
+        self._own_storage = StorageManager(self._owner_db_path)
+        handler = _ChangeHandler(self._own_storage, self._project_id, self._root)
         self._observer = _make_observer()
         self._observer.schedule(handler, self._root, recursive=True)
         self._observer.daemon = True
@@ -143,3 +153,9 @@ class FileWatcher:
             self._observer.join(timeout=2)
             self._observer = None
             logger.info("File watcher stopped")
+        if self._own_storage is not None:
+            try:
+                self._own_storage.close()
+            except Exception:
+                pass
+            self._own_storage = None

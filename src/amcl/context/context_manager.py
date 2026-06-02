@@ -31,12 +31,13 @@ from amcl.storage.storage_manager import StorageManager
 logger = logging.getLogger("amcl.context_manager")
 
 # === Token counting: HONEST tiktoken-based measurement only ===
-# We count actual tokens in stored content using tiktoken cl100k_base.
-# No speculative multipliers — just real text passed through the tokenizer.
+# We count actual tokens in stored content using tiktoken cl100k_base,
+# falling back to the tuned zero-dependency heuristic below when tiktoken
+# is unavailable. No speculative multipliers, no fabricated overhead — just
+# real text passed through the tokenizer. The token figures therefore
+# represent the size of the context A/MCL stored, not a guess at full
+# LLM API-call cost.
 # Tokens != words. "understanding" = 2 tokens, " the" = 1 token.
-# Average English: ~0.75 words per token. Code: more tokens per char.
-SYSTEM_PROMPT_TOKENS = 0
-TOOL_SCHEMA_TOKENS = 0
 
 # Precompiled patterns used by the zero-dependency token estimator.
 # We use bulk `findall` passes over disjoint categories rather than a
@@ -45,18 +46,6 @@ TOOL_SCHEMA_TOKENS = 0
 _WORD_RE = re.compile(r'\w+', re.UNICODE)
 _PUNCT_RE = re.compile(r'[^\w\s]', re.UNICODE)
 _WS_RUN_RE = re.compile(r'\s{2,}', re.UNICODE)
-REASONING_MULTIPLIER = 1
-MESSAGE_INPUT_MULTIPLIER = 1
-FILE_READ_WRITE_MULTIPLIER = 1
-TOOL_CALL_OVERHEAD_PER_CHANGE = 0
-CONTEXT_REFRESH_PER_TURN = 0
-EXPLORATION_FILES_PER_SESSION = 0
-EXPLORATION_TOKENS_PER_FILE = 0
-DECISION_REASONING_MULT = 1
-HIDDEN_TOOL_CALLS_PER_FILE_CHANGE = 0
-HIDDEN_TOOL_CALLS_PER_MESSAGE = 0
-HIDDEN_TOOL_CALLS_PER_SESSION = 0
-PER_HIDDEN_TOOL_CALL_TOKENS = 0
 
 _PROMOTABLE_BLOCKER_RE = re.compile(
     r"\b(blocked|failing|failed|cannot|can't|unable|segfault|crash|crashed)\b",
@@ -646,28 +635,22 @@ class ContextManager:
                         ((summary + "\n") if summary else "")
                         + (raw_content or stored_content)
                     )
-                    # Full LLM cost: system prompt + tool schemas + context refresh
-                    # + (raw tokens × role multiplier × input replay multiplier).
-                    raw_tokens = self._estimate_tokens(token_text)
-                    role_mult = REASONING_MULTIPLIER if role == "assistant" else 1
-                    hidden_tool_cost = HIDDEN_TOOL_CALLS_PER_MESSAGE * PER_HIDDEN_TOOL_CALL_TOKENS
-                    full_cost = (SYSTEM_PROMPT_TOKENS + TOOL_SCHEMA_TOKENS + CONTEXT_REFRESH_PER_TURN
-                                 + raw_tokens * role_mult * MESSAGE_INPUT_MULTIPLIER
-                                 + hidden_tool_cost)
+                    # Honest cost: tiktoken count of the message text we stored.
+                    tokens = self._estimate_tokens(token_text)
                     mid_int = self._message_rowid(mid)
-                    if full_cost > 0 and self._project_id:
+                    if tokens > 0 and self._project_id:
                         try:
                             self._storage.record_token_usage(
                                 self._project_id,
                                 "message_write",
-                                full_cost,
+                                tokens,
                                 self._agent_name,
                                 source_table="messages",
                                 source_id=mid_int,
                             )
                         except Exception:
                             pass
-                    total_tokens += full_cost
+                    total_tokens += tokens
                 results["message_storage"] = storage
                 results["message_chars"] = str(len(stored_content))
                 results["message_raw_chars"] = str(raw_chars)
@@ -724,25 +707,22 @@ class ContextManager:
                     pass
             fc_text = "\n".join(str(p) for p in fc_parts)
             fid_int = int(fid) if fid and str(fid).isdigit() else 0
-            # Full cost: file content read + reasoning + write + tool scaffolding.
-            file_tokens = self._estimate_tokens(fc_text)
-            hidden_tool_cost = HIDDEN_TOOL_CALLS_PER_FILE_CHANGE * PER_HIDDEN_TOOL_CALL_TOKENS
-            full_cost = (file_tokens * FILE_READ_WRITE_MULTIPLIER
-                         + TOOL_CALL_OVERHEAD_PER_CHANGE
-                         + hidden_tool_cost)
-            if full_cost > 0 and self._project_id:
+            # Honest cost: tiktoken count of the file path/summary/diff (and the
+            # on-disk content read above when no diff was supplied).
+            tokens = self._estimate_tokens(fc_text)
+            if tokens > 0 and self._project_id:
                 try:
                     self._storage.record_token_usage(
                         self._project_id,
                         "file_change_write",
-                        full_cost,
+                        tokens,
                         self._agent_name,
                         source_table="file_changes",
                         source_id=fid_int,
                     )
                 except Exception:
                     pass
-            total_tokens += full_cost
+            total_tokens += tokens
 
         if "task" in data:
             t = data["task"]
@@ -771,23 +751,22 @@ class ContextManager:
                 agent=self._agent_name,
             )
             results["decision_id"] = str(did)
-            # Decisions require heavy reasoning — multiply by DECISION_REASONING_MULT.
+            # Honest cost: tiktoken count of the decision payload.
             did_int = int(did) if did else 0
-            base = self._estimate_tokens(json.dumps(d, default=str))
-            full_cost = SYSTEM_PROMPT_TOKENS + DECISION_REASONING_MULT * base
-            if full_cost > 0 and self._project_id:
+            tokens = self._estimate_tokens(json.dumps(d, default=str))
+            if tokens > 0 and self._project_id:
                 try:
                     self._storage.record_token_usage(
                         self._project_id,
                         "decision_write",
-                        full_cost,
+                        tokens,
                         self._agent_name,
                         source_table="decisions",
                         source_id=did_int,
                     )
                 except Exception:
                     pass
-            total_tokens += full_cost
+            total_tokens += tokens
 
         results["tokens_burned"] = str(total_tokens)
         return results
@@ -855,8 +834,8 @@ class ContextManager:
             alts,
             self._agent_name,
         )
-        # Record full-cost decision tokens (system prompt + reasoning overhead).
-        base = self._estimate_tokens(
+        # Honest cost: tiktoken count of the decision payload.
+        tokens = self._estimate_tokens(
             json.dumps(
                 {
                     "question": question,
@@ -867,13 +846,12 @@ class ContextManager:
                 default=str,
             )
         )
-        full_cost = SYSTEM_PROMPT_TOKENS + DECISION_REASONING_MULT * base
-        if full_cost > 0 and self._project_id:
+        if tokens > 0 and self._project_id:
             try:
                 self._storage.record_token_usage(
                     self._project_id,
                     "decision_write",
-                    full_cost,
+                    tokens,
                     self._agent_name,
                     source_table="decisions",
                     source_id=int(did) if did else 0,

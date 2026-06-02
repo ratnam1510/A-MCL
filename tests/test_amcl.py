@@ -1363,6 +1363,103 @@ def test_file_watcher_uses_polling_observer_on_macos():
     print("✅ Test 25: macOS watcher uses PollingObserver")
 
 
+def test_file_watcher_uses_own_connection():
+    """FileWatcher must NOT share the caller's sqlite connection — it runs on
+    the observer thread and needs its own connection."""
+    from amcl.context.file_watcher import FileWatcher
+    from amcl.storage.storage_manager import StorageManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "test.db"
+        proj = Path(tmp) / "proj"
+        proj.mkdir()
+        storage = StorageManager(db)
+        pid = storage.get_or_create_project(path=str(proj), name="proj")
+        watcher = FileWatcher(storage, pid, str(proj))
+        watcher.start()
+        assert watcher._observer is not None
+        # Watcher opened its own StorageManager, distinct from the caller's.
+        assert watcher._own_storage is not None
+        assert watcher._own_storage is not storage
+        assert watcher._own_storage._conn is not storage._conn
+        watcher.stop()
+        assert watcher._own_storage is None  # closed on stop
+        storage.close()
+        print("✅ Test 26: FileWatcher uses its own DB connection")
+
+
+def test_v6_migration_handles_multiple_dangerous_roots():
+    """V6 cleanup must not raise when >1 project has a dangerous root path
+    (previously a UNIQUE(path) IntegrityError on duplicate '' bricked DB open)."""
+    import os
+    from amcl.storage.database import (
+        _apply_v6_migration,
+        _SCHEMA_SQL,
+        _SCHEMA_SQL_V2,
+        _SCHEMA_SQL_V3,
+        _SCHEMA_SQL_V4,
+        _apply_v5_migration,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c = sqlite3.connect(Path(tmp) / "v6.db")
+        c.row_factory = sqlite3.Row
+        for s in (_SCHEMA_SQL, _SCHEMA_SQL_V2, _SCHEMA_SQL_V3, _SCHEMA_SQL_V4):
+            c.executescript(s)
+        _apply_v5_migration(c)
+        c.execute("INSERT INTO projects (name, path) VALUES ('a', '/')")
+        c.execute(
+            "INSERT INTO projects (name, path) VALUES ('b', ?)",
+            (os.path.expanduser("~"),),
+        )
+        c.execute("INSERT INTO token_usage (project_id, operation, tokens) VALUES (1,'read',999)")
+        c.execute("INSERT INTO token_usage (project_id, operation, tokens) VALUES (2,'read',999)")
+        c.commit()
+
+        _apply_v6_migration(c)  # must not raise
+
+        paths = [r["path"] for r in c.execute("SELECT path FROM projects ORDER BY id")]
+        assert all(p.startswith("__amcl_quarantined_") for p in paths), paths
+        assert len(set(paths)) == len(paths), "quarantine sentinels must be unique"
+        toks = c.execute("SELECT COUNT(*) AS n FROM token_usage").fetchone()["n"]
+        assert toks == 0, "phantom token rows should be deleted"
+        c.close()
+        print("✅ Test 27: V6 migration survives multiple dangerous roots")
+
+
+def test_search_context_survives_malformed_fts_query():
+    """A query with FTS5 syntax characters must not raise — it falls back to LIKE."""
+    from amcl.storage.storage_manager import StorageManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sm = StorageManager(Path(tmp) / "fts.db")
+        pid = sm.get_or_create_project(path="/tmp/proj", name="proj")
+        sm.add_message(pid, "user", "fix the auth bug now")
+        for q in ['"', "foo OR", "NEAR(", "a AND", "*", ")(", "auth"]:
+            res = sm.search_context(pid, q)  # must not raise
+            assert "messages" in res
+        # A plain term still matches via FTS.
+        assert len(sm.search_context(pid, "auth")["messages"]) == 1
+        sm.close()
+        print("✅ Test 28: search_context survives malformed FTS queries")
+
+
+def test_get_or_create_project_is_idempotent_upsert():
+    """Repeated get_or_create_project on the same path returns the same id and
+    updates metadata, without colliding on the UNIQUE(path) constraint."""
+    from amcl.storage.storage_manager import StorageManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sm = StorageManager(Path(tmp) / "up.db")
+        a = sm.get_or_create_project(path="/tmp/x", name="x", language="python")
+        b = sm.get_or_create_project(path="/tmp/x", name="x2", language="go")
+        assert a == b
+        info = sm.get_project_info(a)
+        assert info["language"] == "go"  # metadata updated on upsert
+        sm.close()
+        print("✅ Test 29: get_or_create_project upsert is idempotent")
+
+
 # ─────────────────────────────────────────────────────────────
 # 7. CLI TESTS
 # ─────────────────────────────────────────────────────────────
@@ -1683,6 +1780,10 @@ ALL_TESTS = [
     test_file_watcher_skips_root,
     test_file_watcher_skips_nonexistent,
     test_file_watcher_uses_polling_observer_on_macos,
+    test_file_watcher_uses_own_connection,
+    test_v6_migration_handles_multiple_dangerous_roots,
+    test_search_context_survives_malformed_fts_query,
+    test_get_or_create_project_is_idempotent_upsert,
     # CLI
     test_cli_version,
     test_cli_status,
