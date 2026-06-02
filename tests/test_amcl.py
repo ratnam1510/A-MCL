@@ -141,7 +141,7 @@ def test_storage_manager_normalizes_agent_fields():
 # ─────────────────────────────────────────────────────────────
 # 2. PROJECT DETECTION TESTS
 # ─────────────────────────────────────────────────────────────
-EXPECTED_VERSION = "1.3.2"
+EXPECTED_VERSION = "1.3.3"
 
 
 def test_detect_project_with_explicit_path():
@@ -1472,8 +1472,8 @@ def test_cli_version():
 
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
-    assert "1.3.2" in result.output
-    print("✅ Test 26: CLI version is correct (1.3.2)")
+    assert "1.3.3" in result.output
+    print("✅ Test 26: CLI version is correct (1.3.3)")
 
 
 def test_cli_status():
@@ -1805,7 +1805,7 @@ def main():
     errors = []
 
     print("=" * 60)
-    print("  A/MCL v1.3.2 — Comprehensive Test Suite")
+    print("  A/MCL v1.3.3 — Comprehensive Test Suite")
     print(f"  {len(ALL_TESTS)} tests across 9 categories")
     print("=" * 60)
     print()

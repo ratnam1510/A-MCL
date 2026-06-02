@@ -26,7 +26,7 @@ from amcl.storage.database import AMCL_DATA_DIR, DB_PATH
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="1.3.2", prog_name="amcl")
+@click.version_option(version="1.3.3", prog_name="amcl")
 def main():
     """A/MCL — Agent/Multi-Coding-agent Context Layer.
 
@@ -358,7 +358,7 @@ def _share_auth_headers() -> dict:
     environment so a user running their own backend can authenticate.
     """
     secret = os.environ.get("AMCL_SHARE_SECRET", "").strip()
-    headers = {"User-Agent": "A-MCL/1.3.2"}
+    headers = {"User-Agent": "A-MCL/1.3.3"}
     if secret:
         headers["Authorization"] = f"Bearer {secret}"
     return headers
